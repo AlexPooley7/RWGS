@@ -27,8 +27,8 @@ params.inlet.CH4 = 610.43*1000/(60*60*24); % kmol/day -> mol/s
 params.inlet.gases = 1295.90*1000/(60*60*24); % kmol/day -> mol/s
 
 % Arrhenius constants
-params.arr.preExpFactor = 1.7*10^3;     % m3 kg-1 s-1
-params.arr.activationEnergy = 68.5*1000;     % kJ mol-1
+params.arr.preExpFactor = 1.5 % 1.7*10^3;     % m3 kg-1 s-1
+params.arr.activationEnergy = 68.5*1000;     % kJ mol-1 -> J mol-1
 params.arr.gasConst = 8.314;            % J/(mol·K)
 
 % Energy balance constants
@@ -41,6 +41,8 @@ params.eb.CO2.B = 55.2;
 params.eb.CO2.C = -33.7;
 params.eb.CO2.D = 7.9;
 params.eb.CO2.E = -0.1;
+params.CO2.Hf = -393.51*1000; % KJ/mol -> J/mol
+params.CO2.S = 213.79;
 
 % Hydrogen 
 params.eb.H2.Fin = 22951.16*1000/(60*60*24); % kmol/day -> mol/s
@@ -55,6 +57,8 @@ params.eb.H2.B = -11.36;
 params.eb.H2.C = 11.433;
 params.eb.H2.D = -2.77;
 params.eb.H2.E = -0.159;
+params.H2.Hf = 0;
+params.H2.S = 130.68;
 
 % Carbon monoxide
 params.eb.CO.Fin = 7381.52*1000/(60*60*24); % mol/s
@@ -63,6 +67,8 @@ params.eb.CO.B = 6.1;
 params.eb.CO.C = 4.1;
 params.eb.CO.D = -2.7;
 params.eb.CO.E = 0.1;
+params.CO.Hf = -110.53*1000; % kJ/mol -> J/mol
+params.CO.S = 197.66;
 
 % Methane
 params.eb.CH4.Fin = params.inlet.CH4; % mol/s
@@ -71,6 +77,10 @@ params.eb.CH4.B = 108.5;
 params.eb.CH4.C = -42.5;
 params.eb.CH4.D = 5.9;
 params.eb.CH4.E = 0.7;
+
+% Water
+params.H2O.Hf = -241.83*1000; % kJ/mol -> J/mol
+params.H2O.S = 188.84; 
 
 % Define initial conditions 
 FA0 = params.eb.CO2.Fin; 
@@ -87,7 +97,7 @@ params.cpCH4 = schomate(params, 1173 / 1000, 'CH4');
 % Assign initial conditions to vector
 Y0 = [FA0, FB0, FC0, FD0, T0];
 
-Wspan = [0 0.0001];
+Wspan = [0 0.1];
 
 % Pass params to odeSolver using an anonymous function
 [w,Y] = ode15s(@(w,Y) odeSolver(w,Y,params), Wspan, Y0); 
@@ -139,17 +149,25 @@ FA = Y(1); FB = Y(2); FC = Y(3); FD = Y(4); T = Y(5);
 % Rate constant calculations using the Arrhenius equation
 k = params.arr.preExpFactor * exp(-params.arr.activationEnergy / (params.arr.gasConst * T));
 
+% Equilibrium calculations
+deltaHf = params.CO.Hf+params.H2O.Hf-params.CO2.Hf-params.H2.Hf;
+deltaS = params.CO.S+params.H2O.S-params.CO2.S-params.H2.S;
+deltaG = deltaHf -(T*deltaS);
+Keq = exp(-deltaG/(params.arr.gasConst*T));
+
 % Mole fraction calculations 
 totalMol = FA + FB + FC + FD + params.inlet.CH4 + params.inlet.gases;
 molFractionCO2 = FA / totalMol;
 molFractionH2 = FB / totalMol;
+molFractionCO = FC / totalMol;
+molFractionH2O = FD / totalMol;
 
 % Assume pressure P = 1 atm (if needed, define it properly)
 P = 22; % Placeholder before pressure equation determined
 
 % Rate of reaction calculations
-rRWGS = k * molFractionCO2 * molFractionH2 * ((P^2) / (params.arr.gasConst^2) * (T^2)); 
-
+% rRWGS = k * molFractionCO2 * molFractionH2 * ((P^2) / (params.arr.gasConst^2) * (T^2)); 
+rRWGS = (k*P^2/params.arr.gasConst^2*T^2)*((molFractionCO2*molFractionH2)-(molFractionCO*molFractionH2O/Keq));
 % Mole balance ODEs
 dFA_dw = -rRWGS;
 dFB_dw = -rRWGS;
