@@ -28,11 +28,11 @@ params.inlet.gases = 1295.90*1000/(60*60*24); % kmol/day -> mol/s
 
 % Arrhenius constants
 params.arr.preExpFactor = 1.7*10^3;     % m3 kg-1 s-1
-params.arr.activationEnergy = 68.5;     % kJ mol-1
+params.arr.activationEnergy = 68.5*1000;     % kJ mol-1
 params.arr.gasConst = 8.314;            % J/(mol·K)
 
 % Energy balance constants
-params.eb.enthalpyReaction = 41.2; % kJ/mol
+params.eb.enthalpyReaction = 41.2*1000; % kJ/mol -> J/mol
     
 % Carbon Dioxide
 params.eb.CO2.Fin = (725.81+6532.28)*1000/(60*60*24); % kmol/day -> mol/s
@@ -79,15 +79,35 @@ FC0 = params.eb.CO.Fin;
 FD0 = 0; 
 T0 = 1173;
 
+params.cpCO2 = schomate(params, 1173 / 1000, 'CO2'); % Convert to kK
+params.cpH2 = schomate(params, 1173 / 1000, 'H2');
+params.cpCO = schomate(params, 1173 / 1000, 'CO');
+params.cpCH4 = schomate(params, 1173 / 1000, 'CH4');
+
 % Assign initial conditions to vector
 Y0 = [FA0, FB0, FC0, FD0, T0];
 
-Wspan = [0 100];
+Wspan = [0 0.0001];
 
 % Pass params to odeSolver using an anonymous function
 [w,Y] = ode15s(@(w,Y) odeSolver(w,Y,params), Wspan, Y0); 
 
-T = Y(:,1); FA = Y(:,2); FB = Y(:,3); FC = Y(:,4); FD = Y(:,5);
+FA = Y(:,1); FB = Y(:,2); FC = Y(:,3); FD = Y(:,4); T = Y(:,5);
+
+% Conversion CO2-> in-out/in
+% Calculate conversion values
+conversionCO2 = zeros(length(FA), 1);
+for i = 1:length(FA)
+    conversionCO2(i) = (params.eb.CO2.Fin - FA(i)) / params.eb.CO2.Fin;
+end
+
+% Plot CO2 conversion vs. Temperature
+figure;
+plot(w, conversionCO2, 'b', 'LineWidth', 1.5);
+xlabel('Catalyst Weight (kg)');
+ylabel('CO_2 Conversion');
+title('CO_2 Conversion vs. Temperature');
+grid on;
 
 % Plot all variables
 figure;
@@ -107,9 +127,9 @@ ylabel('Temperature (K)');
 title('Temperature vs. Catalyst Weight');
 grid on;
 
-checkCapacity(params); % Check the heat capacity formula
+% checkCapacity(params); % Check the heat capacity formula
 
-
+%%
 % ODE Solver Function
 function dYdt = odeSolver(w,Y,params) %#ok<INUSD> 
 
@@ -125,7 +145,7 @@ molFractionCO2 = FA / totalMol;
 molFractionH2 = FB / totalMol;
 
 % Assume pressure P = 1 atm (if needed, define it properly)
-P = 22; % Placeholder, modify if needed
+P = 22; % Placeholder before pressure equation determined
 
 % Rate of reaction calculations
 rRWGS = k * molFractionCO2 * molFractionH2 * ((P^2) / (params.arr.gasConst^2) * (T^2)); 
@@ -136,12 +156,7 @@ dFB_dw = -rRWGS;
 dFC_dw = rRWGS;
 dFD_dw = rRWGS;
 
-cpCO2 = schomate(params, T / 1000, 'CO2'); % Convert to kK
-cpH2 = schomate(params, T / 1000, 'H2');
-cpCO = schomate(params, T / 1000, 'CO');
-cpCH4 = schomate(params, T / 1000, 'CH4');
-
-sumNcp = cpCO2*params.eb.CO2.Fin + cpH2*params.eb.H2.Fin + cpCO*params.eb.CO.Fin + cpCH4*params.eb.CH4.Fin;
+sumNcp = params.cpCO2*params.eb.CO2.Fin + params.cpH2*params.eb.H2.Fin + params.cpCO*params.eb.CO.Fin + params.cpCH4*params.eb.CH4.Fin;
 
 dT_dw = (params.eb.enthalpyReaction * rRWGS) / (sumNcp);
 
