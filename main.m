@@ -35,7 +35,7 @@ params.arr.gasConst = 8.314;            % J/(mol·K)
 params.eb.enthalpyReaction = 41.2*1000; % kJ/mol -> J/mol
     
 % Carbon Dioxide
-params.eb.CO2.Fin = (725.81+6532.28)*1000/(60*60*24); % kmol/day -> mol/s
+params.eb.CO2.Fin = ((725.81+6532.28)*1000)/(60*60*24); % kmol/day -> mol/s
 params.eb.CO2.A = 25.0;
 params.eb.CO2.B = 55.2;
 params.eb.CO2.C = -33.7;
@@ -52,7 +52,7 @@ params.eb.H2.Fin = 22951.16*1000/(60*60*24); % kmol/day -> mol/s
 % params.eb.H2.D = 0.3;
 % params.eb.H2.E = 2.0;
 
-params.eb.H2.A = 33.066; % these are 298-100K
+params.eb.H2.A = 33.066; % these are 298-1000K
 params.eb.H2.B = -11.36;
 params.eb.H2.C = 11.433;
 params.eb.H2.D = -2.77;
@@ -100,18 +100,17 @@ params.cpCH4 = schomate(params, 1173 / 1000, 'CH4');
 % Assign initial conditions to vector
 Y0 = [FA0, FB0, FC0, FD0, T0];
 
-Wspan = [0 0.001];
+Wspan = [0 0.1];
 
 % Pass params to odeSolver using an anonymous function
-[w,Y] = ode15s(@(w,Y) odeSolver(w,Y,params), Wspan, Y0); 
-
+[w,Y] = ode45(@(w,Y) odeSolver(w,Y,params), Wspan, Y0); 
 FA = Y(:,1); FB = Y(:,2); FC = Y(:,3); FD = Y(:,4); T = Y(:,5);
 
 % Conversion CO2-> in-out/in
 % Calculate conversion values
 conversionCO2 = zeros(length(FA), 1);
 for i = 1:length(FA)
-    conversionCO2(i) = (params.eb.CO2.Fin - FA(i)) / params.eb.CO2.Fin;
+    conversionCO2(i) = (params.eb.CO2.Fin - FA(i)) / (params.eb.CO2.Fin);
 end
 
 % Length calculation
@@ -171,8 +170,8 @@ FA = Y(1); FB = Y(2); FC = Y(3); FD = Y(4); T = Y(5);
 k = params.arr.preExpFactor * exp(-params.arr.activationEnergy / (params.arr.gasConst * T));
 
 % Equilibrium calculations
-deltaHf = params.CO.Hf+params.H2O.Hf-params.CO2.Hf-params.H2.Hf;
-deltaS = params.CO.S+params.H2O.S-params.CO2.S-params.H2.S;
+deltaHf = (params.CO.Hf+params.H2O.Hf)-(params.CO2.Hf+params.H2.Hf);
+deltaS = (params.CO.S+params.H2O.S)-(params.CO2.S+params.H2.S);
 deltaG = deltaHf -(T*deltaS);
 Keq = exp(-deltaG/(params.arr.gasConst*T));
 
@@ -184,11 +183,11 @@ molFractionCO = FC / totalMol;
 molFractionH2O = FD / totalMol;
 
 % Assume pressure P = 1 atm (if needed, define it properly)
-P = 22; % Placeholder before pressure equation determined
+P = 22*100000; % Placeholder before pressure equation determined
 
 % Rate of reaction calculations
 % rRWGS = k * molFractionCO2 * molFractionH2 * ((P^2) / (params.arr.gasConst^2) * (T^2)); 
-rRWGS = (k*P^2/params.arr.gasConst^2*T^2)*((molFractionCO2*molFractionH2)-(molFractionCO*molFractionH2O/Keq));
+rRWGS = (k*P^2/(params.arr.gasConst^2*T^2))*((molFractionCO2*molFractionH2)-(molFractionCO*molFractionH2O/Keq));
 
 % Mole balance ODEs
 dFA_dw = -rRWGS;
