@@ -27,7 +27,7 @@ params.inlet.CH4 = 610.43*1000/(60*60*24); % kmol/day -> mol/s
 params.inlet.gases = 1295.90*1000/(60*60*24); % kmol/day -> mol/s
 
 % Arrhenius constants
-params.arr.preExpFactor = 1.7*10^3;     % m3 kg-1 s-1
+params.arr.preExpFactor = 1.7;     % m3 kg-1 s-1
 params.arr.activationEnergy = 68.5*1000;     % kJ mol-1 -> J mol-1
 params.arr.gasConst = 8.314;            % J/(mol·K)
 
@@ -82,15 +82,22 @@ params.eb.CH4.E = 0.7;
 params.H2O.Hf = -241.83*1000; % kJ/mol -> J/mol
 params.H2O.S = 188.84; 
 
-% Catalsyt parameters
-params.catalyst.bulkDensity = 1200; % kg/m3
+% Ergun equation
+params.reactor.diameter = 0.3; % REMEMBER TO LINK BACK TO ODE FUNC
+params.ergun.bulkDensity = 1200; % kg/m3
+params.ergun.particleDensity = 1910; % kg/m3
+params.ergun.voidage = (params.ergun.particleDensity-params.ergun.bulkDensity)/params.ergun.particleDensity; % -
+params.ergun.particleDiamater = 0.006; % m
+params.ergun.csArea = (pi*params.reactor.diameter^2)/4;
+params.ergun.initialTotalMolarFlow = ; 
 
 % Define initial conditions 
 FA0 = params.eb.CO2.Fin; 
 FB0 = params.eb.H2.Fin; 
 FC0 = params.eb.CO.Fin;
 FD0 = 0; 
-T0 = 1000;
+T0 = 1000; % K
+P0 = 22*100000; % Pa
 
 params.cpCO2 = schomate(params, 1173 / 1000, 'CO2'); % Convert to kK
 params.cpH2 = schomate(params, 1173 / 1000, 'H2');
@@ -100,7 +107,7 @@ params.cpCH4 = schomate(params, 1173 / 1000, 'CH4');
 % Assign initial conditions to vector
 Y0 = [FA0, FB0, FC0, FD0, T0];
 
-Wspan = [0 0.1];
+Wspan = [0 50];
 
 % Pass params to odeSolver using an anonymous function
 [w,Y] = ode45(@(w,Y) odeSolver(w,Y,params), Wspan, Y0); 
@@ -114,12 +121,16 @@ for i = 1:length(FA)
 end
 
 % Length calculation
-reactorDiameter = zeros(length(w), 1);
+reactorDiameter = 0.2;% zeros(length(w), 1);
 reactorLength = zeros(length(w), 1);
-DLratio = 10;
+% DLratio = 10;
+% for i = 1:length(w)
+%     reactorDiameter(i) = nthroot((w(i)*4)/(pi*params.ergun.bulkDensity*DLratio),3);
+%     reactorLength(i) = reactorDiameter(i) * DLratio;
+% end 
+
 for i = 1:length(w)
-    reactorDiameter(i) = nthroot((w(i)*4)/(pi*params.catalyst.bulkDensity*DLratio),3);
-    reactorLength(i) = reactorDiameter(i) * DLratio;
+    reactorLength(i) = (4*w(i)/(params.ergun.bulkDensity*pi*(reactorDiameter^3)));
 end 
 
 % Plot CO2 conversion vs. reactor length
