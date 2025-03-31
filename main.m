@@ -27,7 +27,7 @@ params.inlet.CH4 = 610.43*1000/(60*60*24); % kmol/day -> mol/s
 params.inlet.gases = 1295.90*1000/(60*60*24); % kmol/day -> mol/s
 
 % Arrhenius constants
-params.arr.preExpFactor = 1.5 % 1.7*10^3;     % m3 kg-1 s-1
+params.arr.preExpFactor = 1.7*10^3;     % m3 kg-1 s-1
 params.arr.activationEnergy = 68.5*1000;     % kJ mol-1 -> J mol-1
 params.arr.gasConst = 8.314;            % J/(mol·K)
 
@@ -82,12 +82,15 @@ params.eb.CH4.E = 0.7;
 params.H2O.Hf = -241.83*1000; % kJ/mol -> J/mol
 params.H2O.S = 188.84; 
 
+% Catalsyt parameters
+params.catalyst.bulkDensity = 1200; % kg/m3
+
 % Define initial conditions 
 FA0 = params.eb.CO2.Fin; 
 FB0 = params.eb.H2.Fin; 
 FC0 = params.eb.CO.Fin;
 FD0 = 0; 
-T0 = 1173;
+T0 = 1000;
 
 params.cpCO2 = schomate(params, 1173 / 1000, 'CO2'); % Convert to kK
 params.cpH2 = schomate(params, 1173 / 1000, 'H2');
@@ -97,7 +100,7 @@ params.cpCH4 = schomate(params, 1173 / 1000, 'CH4');
 % Assign initial conditions to vector
 Y0 = [FA0, FB0, FC0, FD0, T0];
 
-Wspan = [0 0.1];
+Wspan = [0 0.001];
 
 % Pass params to odeSolver using an anonymous function
 [w,Y] = ode15s(@(w,Y) odeSolver(w,Y,params), Wspan, Y0); 
@@ -111,8 +114,26 @@ for i = 1:length(FA)
     conversionCO2(i) = (params.eb.CO2.Fin - FA(i)) / params.eb.CO2.Fin;
 end
 
-% Plot CO2 conversion vs. Temperature
+% Length calculation
+reactorDiameter = zeros(length(w), 1);
+reactorLength = zeros(length(w), 1);
+DLratio = 10;
+for i = 1:length(w)
+    reactorDiameter(i) = nthroot((w(i)*4)/(pi*params.catalyst.bulkDensity*DLratio),3);
+    reactorLength(i) = reactorDiameter(i) * DLratio;
+end 
+
+% Plot CO2 conversion vs. reactor length
 figure;
+subplot(3,2,1)
+plot(reactorLength, conversionCO2, 'b', 'LineWidth', 1.5);
+xlabel('Reactor Length (m)');
+ylabel('CO_2 Conversion');
+title('CO_2 Conversion vs. Reactor Length (m)');
+grid on;
+
+% Plot CO2 conversion vs. Temperature
+subplot(3,2,2);
 plot(w, conversionCO2, 'b', 'LineWidth', 1.5);
 xlabel('Catalyst Weight (kg)');
 ylabel('CO_2 Conversion');
@@ -120,9 +141,9 @@ title('CO_2 Conversion vs. Temperature');
 grid on;
 
 % Plot all variables
-figure;
 
-subplot(2,1,1);
+
+subplot(3,2,3);
 plot(w, FA, 'r', w, FB, 'b', w, FC, 'g', w, FD, 'm', 'LineWidth', 1.5);
 xlabel('Weight of Catalyst (kg)');
 ylabel('Molar Flow Rate (mol/s)');
@@ -130,7 +151,7 @@ legend('CO2 (FA)', 'H2 (FB)', 'CO (FC)', 'H2O (FD)');
 title('Molar Flow Rates vs. Catalyst Weight');
 grid on;
 
-subplot(2,1,2);
+subplot(3,2,4);
 plot(w, T, 'k', 'LineWidth', 1.5);
 xlabel('Weight of Catalyst (kg)');
 ylabel('Temperature (K)');
@@ -168,6 +189,7 @@ P = 22; % Placeholder before pressure equation determined
 % Rate of reaction calculations
 % rRWGS = k * molFractionCO2 * molFractionH2 * ((P^2) / (params.arr.gasConst^2) * (T^2)); 
 rRWGS = (k*P^2/params.arr.gasConst^2*T^2)*((molFractionCO2*molFractionH2)-(molFractionCO*molFractionH2O/Keq));
+
 % Mole balance ODEs
 dFA_dw = -rRWGS;
 dFB_dw = -rRWGS;
