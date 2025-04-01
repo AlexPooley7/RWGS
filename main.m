@@ -29,7 +29,7 @@ params.inlet.temp = 1000; % K
 params.inlet.pres = 22*100000; % bar -> Pa
 
 % Arrhenius constants
-params.arr.preExpFactor = 1.7* 10^ -3;     % m3 kg-1 s-1, actually (1.7 * 10^ -3)
+params.arr.preExpFactor = 1.7;     % m3 kg-1 s-1, actually (1.7 * 10^ -3)
 params.arr.activationEnergy = 68.5*1000;     % kJ mol-1 -> J mol-1
 params.arr.gasConst = 8.314;            % J/(mol·K)
 
@@ -83,15 +83,15 @@ params.eb.CH4.E = 0.7;
 % Water
 params.H2O.Hf = -241.83*1000; % kJ/mol -> J/mol
 params.H2O.S = 188.84; 
-
+%%
 % Ergun equation
-params.reactor.diameter = 0.3; % REMEMBER TO LINK BACK TO ODE FUNC
+params.reactor.diameter = 0.3; 
 params.ergun.bulkDensity = 1200; % kg/m3
 params.ergun.particleDensity = 1910; % kg/m3
 params.ergun.voidage = (params.ergun.particleDensity-params.ergun.bulkDensity)/params.ergun.particleDensity; % -
 params.ergun.particleDiamater = 0.006; % m
-params.ergun.csArea = (pi*params.reactor.diameter^2)/4;
-params.ergun.initialTotalMolarFlow = params.eb.CO2.Fin+params.eb.H2.Fin + params.eb.CO.Fin + params.inlet.CH4 + params.inlet.gases; 
+params.ergun.csArea = (pi*params.reactor.diameter^2)/4; % m2
+params.ergun.initialTotalMolarFlow = params.eb.CO2.Fin+params.eb.H2.Fin + params.eb.CO.Fin + params.inlet.CH4 + params.inlet.gases; % (mol/s)
 
 % Initial Density Calculator
 %   Mole fractions
@@ -112,7 +112,7 @@ params.ergun.inletDensity = densityCalculation(params);
 
 % Volumetric flowrate calculation
 params.inlet.totalMassFlowrate = (340236.1+287420.26)/(60*60*24); % kgday-1 -> kg s-1
-params.inlet.totalVolFlowrate = params.inlet.totalMassFlowrate/params.ergun.inletDensity;
+params.inlet.totalVolFlowrate = params.inlet.totalMassFlowrate/params.ergun.inletDensity; % m3 s-1
 params.ergun.supVel = params.inlet.totalVolFlowrate/params.ergun.csArea; % m s-1
 
 % Gas Flux
@@ -122,11 +122,10 @@ params.ergun.gasFlux = params.ergun.inletDensity*params.ergun.supVel; % kg m-2 s
 params.ergun.mixtureViscocity = viscocityCalculation(params);
 
 %%
-
-params.cpCO2 = schomate(params, 1173 / 1000, 'CO2'); % Convert to kK
-params.cpH2 = schomate(params, 1173 / 1000, 'H2');
-params.cpCO = schomate(params, 1173 / 1000, 'CO');
-params.cpCH4 = schomate(params, 1173 / 1000, 'CH4');
+params.cpCO2 = schomate(params, params.inlet.temp / 1000, 'CO2'); % Convert to kK
+params.cpH2 = schomate(params, params.inlet.temp / 1000, 'H2');
+params.cpCO = schomate(params, params.inlet.temp / 1000, 'CO');
+params.cpCH4 = schomate(params, params.inlet.temp / 1000, 'CH4');
 
 % Define initial conditions 
 FA0 = params.eb.CO2.Fin; 
@@ -242,6 +241,8 @@ beta = ((params.ergun.gasFlux*(1-params.ergun.voidage))/(params.ergun.inletDensi
 
 dP_dw = (-beta/(params.ergun.csArea*(1-params.ergun.voidage)*params.ergun.particleDiamater))*(params.inlet.pres/P)*(T*params.inlet.temp)*(totalMol/params.ergun.initialTotalMolarFlow);
 
+% dP_dw = (1/(params.ergun.bulkDensity*params.ergun.csArea))*(((150*((1-params.ergun.voidage)^2)*params.ergun.mixtureViscocity*params.ergun.supVel)/((params.ergun.voidage^3)*(params.ergun.particleDiamater^2)))+((1.75*(1-params.ergun.voidage)*params.ergun.inletDensity*(params.ergun.supVel^2))/((params.ergun.voidage^3)*params.ergun.particleDiamater)));
+
 % Output vector for ODE solver
 dYdt = [dFA_dw; dFB_dw; dFC_dw; dFD_dw; dT_dw; dP_dw];
 
@@ -314,7 +315,6 @@ function inletDensity = densityCalculation(params)
 
     % Weighted average molar mass
     averageInletMolarMass = ((params.inlet.molFrac.CO2*params.molMass.CO2)+...
-                            (params.inlet.molFrac.CO2*params.molMass.CO2)+...
                             (params.inlet.molFrac.H2*params.molMass.H2) + ...
                             (params.inlet.molFrac.CO*params.molMass.CO) + ...
                             (params.inlet.molFrac.CH4*params.molMass.CH4) + ...
