@@ -27,7 +27,7 @@ params.inlet.CH4 = 610.43*1000/(60*60*24); % kmol/day -> mol/s
 params.inlet.gases = 1295.90*1000/(60*60*24); % kmol/day -> mol/s
 
 % Arrhenius constants
-params.arr.preExpFactor = 1.7;     % m3 kg-1 s-1
+params.arr.preExpFactor = 1.7;     % m3 kg-1 s-1, actually (1.7 * 10^ -3)
 params.arr.activationEnergy = 68.5*1000;     % kJ mol-1 -> J mol-1
 params.arr.gasConst = 8.314;            % J/(mol·K)
 
@@ -46,17 +46,17 @@ params.CO2.S = 213.79;
 
 % Hydrogen 
 params.eb.H2.Fin = 22951.16*1000/(60*60*24); % kmol/day -> mol/s
-% params.eb.H2.A = 18.6; % 1000-2500
-% params.eb.H2.B = 12.3;
-% params.eb.H2.C = -2.9;
-% params.eb.H2.D = 0.3;
-% params.eb.H2.E = 2.0;
+params.eb.H2.A = 18.6; % 1000-2500
+params.eb.H2.B = 12.3;
+params.eb.H2.C = -2.9;
+params.eb.H2.D = 0.3;
+params.eb.H2.E = 2.0;
 
-params.eb.H2.A = 33.066; % these are 298-1000K
-params.eb.H2.B = -11.36;
-params.eb.H2.C = 11.433;
-params.eb.H2.D = -2.77;
-params.eb.H2.E = -0.159;
+% params.eb.H2.A = 33.066; % these are 298-1000K
+% params.eb.H2.B = -11.36;
+% params.eb.H2.C = 11.433;
+% params.eb.H2.D = -2.77;
+% params.eb.H2.E = -0.159;
 params.H2.Hf = 0;
 params.H2.S = 130.68;
 
@@ -89,7 +89,7 @@ params.ergun.particleDensity = 1910; % kg/m3
 params.ergun.voidage = (params.ergun.particleDensity-params.ergun.bulkDensity)/params.ergun.particleDensity; % -
 params.ergun.particleDiamater = 0.006; % m
 params.ergun.csArea = (pi*params.reactor.diameter^2)/4;
-params.ergun.initialTotalMolarFlow = ; 
+params.ergun.initialTotalMolarFlow = params.eb.CO2.Fin+params.eb.H2.Fin + params.eb.CO.Fin + params.inlet.CH4 + params.inlet.gases; 
 
 % Define initial conditions 
 FA0 = params.eb.CO2.Fin; 
@@ -98,6 +98,79 @@ FC0 = params.eb.CO.Fin;
 FD0 = 0; 
 T0 = 1000; % K
 P0 = 22*100000; % Pa
+
+% Initial Density Calculator
+%   Mole fractions
+params.inlet.molFrac.CO2 = params.eb.CO2.Fin/params.ergun.initialTotalMolarFlow;
+params.inlet.molFrac.H2 = params.eb.H2.Fin/params.ergun.initialTotalMolarFlow;
+params.inlet.molFrac.CO = params.eb.CO.Fin/params.ergun.initialTotalMolarFlow;
+params.inlet.molFrac.CH4 = params.inlet.CH4/params.ergun.initialTotalMolarFlow;
+params.inlet.molFrac.gases = params.inlet.gases/params.ergun.initialTotalMolarFlow;
+% Molar Masses
+params.molMass.CO2 = 44;
+params.molMass.H2 = 2.016;
+params.molMass.CO = 28.01;
+params.molMass.CH4 = 16.04;
+params.molMass.gases = 35;
+% Weighted average molar mass
+averageInletMolarMass = ((params.inlet.molFrac.CO2*params.molMass.CO2)+...
+                        (params.inlet.molFrac.CO2*params.molMass.CO2)+...
+                        (params.inlet.molFrac.H2*params.molMass.H2) + ...
+                        (params.inlet.molFrac.CO*params.molMass.CO) + ...
+                        (params.inlet.molFrac.CH4*params.molMass.CH4) + ...
+                        (params.inlet.molFrac.gases*params.molMass.gases))/1000; % gmol-1 -> kgmol-1
+% Gas inlet density calculation
+params.ergun.inletDensity = (P0*averageInletMolarMass)/(params.arr.gasConst*T0);
+
+% Volumetric flowrate calculation
+params.inlet.totalMassFlowrate = (340236.1+287420.26)/(60*60*24); % kgday-1 -> kg s-1
+params.inlet.totalVolFlowrate = params.inlet.totalMassFlowrate/params.ergun.inletDensity;
+params.ergun.supVel = params.inlet.totalVolFlowrate/params.ergun.csArea; % m s-1
+
+% Gas Flux
+params.ergun.gasFlux = params.ergun.inletDensity*params.ergun.supVel; % kg m-2 s-1
+%%
+% Viscocity
+% Given Data
+y = [params.inlet.molFrac.CO2, params.inlet.molFrac.H2, params.inlet.molFrac.CO, params.inlet.molFrac.CH4, params.inlet.molFrac.gases];
+
+% Dynamic viscosities (Pa.s) at 1000 K (approximate values)
+mu = [41.25e-6, 18.77e-6, 40.4e-6, 38.6e-6, 3.5e-5];
+    %   https://www.engineeringtoolbox.com/carbon-dioxide-dynamic-kinematic-viscosity-temperature-pressure-d_2074.html#:~:text=Online%20calculator%2C%20figures%20and%20table%20showing%20dynamic%20and,deformation%20by%20shear%20stress%20or%20tensile%20stress%20.,
+    %   https://www.lmnoeng.com/Flow/GasViscosity.php
+    %   https://www.lmnoeng.com/Flow/GasViscosity.php
+    %   https://www.engineeringtoolbox.com/gases-absolute-dynamic-viscosity-d_1888.html?
+    %   The Viscosity and Thermal Conductivity of Ethane in the Limit of Zero Density 
+
+% Molecular weights (g/mol)
+M = [params.molMass.CO2, params.molMass.H2, params.molMass.CO, params.molMass.CH4, params.molMass.gases];
+
+n = length(y);
+phi = zeros(n, n);
+
+% Compute interaction coefficients
+for i = 1:n
+    for j = 1:n
+        if i ~= j
+            phi(i,j) = ((1 + (mu(i)/mu(j))^0.5 * (M(j)/M(i))^0.25)^2) / ...
+                       (sqrt(8) * (1 + M(i)/M(j)));
+        else
+            phi(i,j) = 1;
+        end
+    end
+end
+
+% Compute mixture viscosity using Wilke's equation
+denominator = sum(y .* phi, 2);
+mu_m = sum((y .* mu) ./ denominator);
+
+% Element-wise multiplication of mu_m with y
+mu_m_y = mu_m .* y;
+
+% Sum all the values of mu_m_y into a new variable
+mixtureViscocity = sum(mu_m_y);
+
+%%
 
 params.cpCO2 = schomate(params, 1173 / 1000, 'CO2'); % Convert to kK
 params.cpH2 = schomate(params, 1173 / 1000, 'H2');
@@ -121,16 +194,16 @@ for i = 1:length(FA)
 end
 
 % Length calculation
-reactorDiameter = 0.2;% zeros(length(w), 1);
-reactorLength = zeros(length(w), 1);
+% reactorDiameter = 0.2;% zeros(length(w), 1);
 % DLratio = 10;
 % for i = 1:length(w)
 %     reactorDiameter(i) = nthroot((w(i)*4)/(pi*params.ergun.bulkDensity*DLratio),3);
 %     reactorLength(i) = reactorDiameter(i) * DLratio;
 % end 
 
+reactorLength = zeros(length(w), 1);
 for i = 1:length(w)
-    reactorLength(i) = (4*w(i)/(params.ergun.bulkDensity*pi*(reactorDiameter^3)));
+    reactorLength(i) = (4*w(i)/(params.ergun.bulkDensity*pi*(params.reactor.diameter^3)));
 end 
 
 % Plot CO2 conversion vs. reactor length
