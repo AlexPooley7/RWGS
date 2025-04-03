@@ -29,7 +29,7 @@ params.inlet.temp = 1000; % K
 params.inlet.pres = 22*100000; % bar -> Pa
 
 % Arrhenius constants
-params.arr.preExpFactor = 1.7;     % m3 kg-1 s-1, actually (1.7 * 10^ -3)
+params.arr.preExpFactor = 1.7/100;     % m3 kg-1 s-1, actually (1.7 * 10^ 3)
 params.arr.activationEnergy = 68.5*1000;     % kJ mol-1 -> J mol-1
 params.arr.gasConst = 8.314;            % J/(mol·K)
 
@@ -53,7 +53,6 @@ params.eb.H2.B = 12.3;
 params.eb.H2.C = -2.9;
 params.eb.H2.D = 0.3;
 params.eb.H2.E = 2.0;
-
 % params.eb.H2.A = 33.066; % these are 298-1000K
 % params.eb.H2.B = -11.36;
 % params.eb.H2.C = 11.433;
@@ -85,7 +84,7 @@ params.H2O.Hf = -241.83*1000; % kJ/mol -> J/mol
 params.H2O.S = 188.84; 
 %%
 % Ergun equation
-params.reactor.diameter = 0.3; 
+params.reactor.diameter = 0.75; % m
 params.ergun.bulkDensity = 1200; % kg/m3
 params.ergun.particleDensity = 1910; % kg/m3
 params.ergun.voidage = (params.ergun.particleDensity-params.ergun.bulkDensity)/params.ergun.particleDensity; % -
@@ -101,7 +100,7 @@ params.inlet.molFrac.CO = params.eb.CO.Fin/params.ergun.initialTotalMolarFlow;
 params.inlet.molFrac.CH4 = params.inlet.CH4/params.ergun.initialTotalMolarFlow;
 params.inlet.molFrac.gases = params.inlet.gases/params.ergun.initialTotalMolarFlow;
 
-%   Molar Masses
+%   Molar Masses gmol-1
 params.molMass.CO2 = 44;
 params.molMass.H2 = 2.016;
 params.molMass.CO = 28.01;
@@ -114,13 +113,27 @@ params.ergun.inletDensity = densityCalculation(params);
 params.inlet.totalMassFlowrate = (340236.1+287420.26)/(60*60*24); % kgday-1 -> kg s-1
 params.inlet.totalVolFlowrate = params.inlet.totalMassFlowrate/params.ergun.inletDensity; % m3 s-1
 params.ergun.supVel = params.inlet.totalVolFlowrate/params.ergun.csArea; % m s-1
-
+disp(params.ergun.supVel)
 % Gas Flux
 params.ergun.gasFlux = params.ergun.inletDensity*params.ergun.supVel; % kg m-2 s-1
 
 % Viscocity
 params.ergun.mixtureViscocity = viscocityCalculation(params);
+disp(params.ergun.mixtureViscocity)
 
+% Display results in a table
+ParamNames = {'Reactor Diameter'; 'Particle Diameter'; 'Bed Voidage'; 'Cross-Sectional Area'; ...
+              'Initial Total Molar Flow'; 'Inlet Density'; 'Total Mass Flowrate'; ...
+              'Total Volumetric Flowrate'; 'Superficial Velocity'; 'Gas Flux'};
+
+Values = [params.reactor.diameter; params.ergun.particleDiamater; params.ergun.voidage; params.ergun.csArea; ...
+          params.ergun.initialTotalMolarFlow; params.ergun.inletDensity; params.inlet.totalMassFlowrate; ...
+          params.inlet.totalVolFlowrate; params.ergun.supVel; params.ergun.gasFlux];
+
+Units = {'m'; 'm'; '-'; 'm^2'; 'mol/s'; 'kg/m^3'; 'kg/s'; 'm^3/s'; 'm/s'; 'kg/m^2·s'};
+
+ResultsTable = table(ParamNames, Values, Units);
+disp(ResultsTable);
 %%
 params.cpCO2 = schomate(params, params.inlet.temp / 1000, 'CO2'); % Convert to kK
 params.cpH2 = schomate(params, params.inlet.temp / 1000, 'H2');
@@ -138,7 +151,7 @@ P0 = params.inlet.pres; % Pa
 % Assign initial conditions to vector
 Y0 = [FA0, FB0, FC0, FD0, T0, P0];
 
-Wspan = [0 50];
+Wspan = [0 5000];
 
 % Pass params to odeSolver using an anonymous function
 [w,Y] = ode45(@(w,Y) odeSolver(w,Y,params), Wspan, Y0); 
@@ -225,7 +238,11 @@ molFractionH2O = FD / totalMol;
 
 % Rate of reaction calculations
 % rRWGS = k * molFractionCO2 * molFractionH2 * ((P^2) / (params.arr.gasConst^2) * (T^2)); 
-rRWGS = (k*P^2/(params.arr.gasConst^2*T^2))*((molFractionCO2*molFractionH2)-(molFractionCO*molFractionH2O/Keq));
+rRWGS = (k*P^2/(params.arr.gasConst^2*T^2))*((molFractionCO2*molFractionH2)-((molFractionCO*molFractionH2O)/Keq));
+
+sumNcp = params.cpCO2*params.eb.CO2.Fin + params.cpH2*params.eb.H2.Fin + params.cpCO*params.eb.CO.Fin + params.cpCH4*params.eb.CH4.Fin;
+
+beta = ((params.ergun.gasFlux*(1-params.ergun.voidage))/(params.ergun.inletDensity*params.ergun.particleDiamater*params.ergun.voidage^3))*((150*(1-params.ergun.voidage)*params.ergun.mixtureViscocity)/params.ergun.particleDiamater)+(1.75*params.ergun.gasFlux);
 
 % Mole balance ODEs
 dFA_dw = -rRWGS;
@@ -233,15 +250,13 @@ dFB_dw = -rRWGS;
 dFC_dw = rRWGS;
 dFD_dw = rRWGS;
 
-sumNcp = params.cpCO2*params.eb.CO2.Fin + params.cpH2*params.eb.H2.Fin + params.cpCO*params.eb.CO.Fin + params.cpCH4*params.eb.CH4.Fin;
-
 dT_dw = (params.eb.enthalpyReaction * rRWGS) / (sumNcp);
 
-beta = ((params.ergun.gasFlux*(1-params.ergun.voidage))/(params.ergun.inletDensity*params.ergun.particleDiamater*params.ergun.inletDensity^3))*((150*(1-params.ergun.voidage)*params.ergun.mixtureViscocity)/params.ergun.particleDiamater)+(1.75*params.ergun.gasFlux);
-
-dP_dw = (-beta/(params.ergun.csArea*(1-params.ergun.voidage)*params.ergun.particleDiamater))*(params.inlet.pres/P)*(T*params.inlet.temp)*(totalMol/params.ergun.initialTotalMolarFlow);
+dP_dw = (-beta/(params.ergun.csArea*(1-params.ergun.voidage)*params.ergun.particleDensity))*(params.inlet.pres/P)*(T/params.inlet.temp)*(totalMol/params.ergun.initialTotalMolarFlow);
 
 % dP_dw = (1/(params.ergun.bulkDensity*params.ergun.csArea))*(((150*((1-params.ergun.voidage)^2)*params.ergun.mixtureViscocity*params.ergun.supVel)/((params.ergun.voidage^3)*(params.ergun.particleDiamater^2)))+((1.75*(1-params.ergun.voidage)*params.ergun.inletDensity*(params.ergun.supVel^2))/((params.ergun.voidage^3)*params.ergun.particleDiamater)));
+
+% Page 169 elements Fogler
 
 % Output vector for ODE solver
 dYdt = [dFA_dw; dFB_dw; dFC_dw; dFD_dw; dT_dw; dP_dw];
@@ -337,8 +352,8 @@ function mixtureViscocity = viscocityCalculation(params)
         %   https://www.engineeringtoolbox.com/gases-absolute-dynamic-viscosity-d_1888.html?
         %   The Viscosity and Thermal Conductivity of Ethane in the Limit of Zero Density 
     
-    % Molecular weights (g/mol)
-    M = [params.molMass.CO2, params.molMass.H2, params.molMass.CO, params.molMass.CH4, params.molMass.gases];
+    % Molecular weights (kg/mol*1000)
+    M = [params.molMass.CO2*1000, params.molMass.H2*1000, params.molMass.CO*1000, params.molMass.CH4*1000, params.molMass.gases*1000];
     
     n = length(y);
     phi = zeros(n, n);
