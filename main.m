@@ -88,7 +88,7 @@ params.reactor.diameter = 0.75; % m
 params.ergun.bulkDensity = 1200; % kg/m3
 params.ergun.particleDensity = 1910; % kg/m3
 params.ergun.voidage = (params.ergun.particleDensity-params.ergun.bulkDensity)/params.ergun.particleDensity; % -
-params.ergun.particleDiamater = 0.006; % m
+params.ergun.particleDiameter = 0.006; % m
 params.ergun.csArea = (pi*params.reactor.diameter^2)/4; % m2
 params.ergun.initialTotalMolarFlow = params.eb.CO2.Fin+params.eb.H2.Fin + params.eb.CO.Fin + params.inlet.CH4 + params.inlet.gases; % (mol/s)
 
@@ -160,10 +160,11 @@ for i = 1:length(w)
 end 
 
 % Plot data
-plotOriginal(reactorLength,conversionCO2,w,FA,FB,FC,FD,T,P)
+% plotOriginal(reactorLength,conversionCO2,w,FA,FB,FC,FD,T,P)
 % displayTable(params)
-optimiseTemp(init,params) % Temperature optimisation function
-optimisePressure(init, params) % Pressure optimisation function
+% optimiseTemp(init,params) % Temperature optimisation function
+% optimisePressure(init, params) % Pressure optimisation function
+optimiseParticleDiamater(init, params) % Particle diameter optimisation function
 
 %%
 % ODE Solver Function
@@ -193,7 +194,7 @@ rRWGS = (k*P^2/(params.arr.gasConst^2*T^2))*((molFractionCO2*molFractionH2)-((mo
 
 sumNcp = params.cpCO2*params.eb.CO2.Fin + params.cpH2*params.eb.H2.Fin + params.cpCO*params.eb.CO.Fin + params.cpCH4*params.eb.CH4.Fin;
 
-beta = ((params.ergun.gasFlux*(1-params.ergun.voidage))/(params.ergun.inletDensity*params.ergun.particleDiamater*params.ergun.voidage^3))*((150*(1-params.ergun.voidage)*params.ergun.mixtureViscocity)/params.ergun.particleDiamater)+(1.75*params.ergun.gasFlux);
+beta = ((params.ergun.gasFlux*(1-params.ergun.voidage))/(params.ergun.inletDensity*params.ergun.particleDiameter*params.ergun.voidage^3))*((150*(1-params.ergun.voidage)*params.ergun.mixtureViscocity)/params.ergun.particleDiameter)+(1.75*params.ergun.gasFlux);
 
 % Mole balance ODEs
 dFA_dw = -rRWGS;
@@ -499,13 +500,80 @@ function optimisePressure(init, params)
 end
 
 %%
+function optimiseParticleDiamater(init, params)
+    % This function runs the ODE with 10 different catalyst diamaters.
+    
+    diameters = params.ergun.particleDiameter + (-5:5) * 0.0005;
+
+    % Store results
+    W_all = cell(1, length(diameters)); % Store W values
+    P_all = cell(1, length(diameters)); % Store Temperature profiles
+    FA_all = cell(1, length(diameters)); % Store FA values
+    CO2ConversionAll = cell(1, length(diameters)); % Store CO2 conversion
+
+    % Prepare figures before loop
+    figure(6); % For CO2 conversion profiles
+    figure(7);
+
+    % Loop over each temperature
+    for i = 1:length(diameters)
+        params.ergun.particleDiameter = diameters(i);
+        
+        % Assign initial conditions to vector
+        Y0 = [init.FA0, init.FB0, init.FC0, init.FD0, init.T0, init.P0];
+        
+        % Define span for integration
+        Wspan = [0 5000];
+
+        % Solve ODE
+        [W, Y] = ode45(@(w, Y) odeSolver(w, Y, params), Wspan, Y0);
+
+        % Store data
+        W_all{i} = W; 
+        P_all{i} = Y(:,6); % Extract Pressure
+        FA_all{i} = Y(:,1); % Extract FA
+        
+        % Compute CO2 conversion
+        CO2ConversionAll{i} = (params.eb.CO2.Fin - FA_all{i}) / params.eb.CO2.Fin;
+
+        % Plot W vs. CO2 Conversion (only once outside the loop for figure 3)
+        figure(6);
+        plot(W, CO2ConversionAll{i}, 'DisplayName', sprintf('%dK', diameters(i)));
+        hold on;
+
+        % Plot W vs. CO2 Conversion (only once outside the loop for figure 3)
+        figure(7);
+        plot(W, P_all{i}, 'DisplayName', sprintf('%dK', diameters(i)));
+        hold on;
+    end 
+
+    % Formatting for CO2 Conversion Profile (after loop)
+    figure(6);
+    xlabel('W (kg catalyst)');
+    ylabel('CO2 Conversion');
+    title('CO2 Conversion vs. Catalyst Weight for Different Initial Temperatures');
+    legend show;
+    grid on;
+    hold off;
+    
+    % Formatting for CO2 Conversion Profile (after loop)
+    figure(7);
+    xlabel('W (kg catalyst)');
+    ylabel('Pressure (Pa)');
+    title('Pressure vs. Catalyst Weight for Different Initial Temperatures');
+    legend show;
+    grid on;
+    hold off;
+end
+
+%%
 function displayTable(params)
     % Display results in a table
     ParamNames = {'Reactor Diameter'; 'Particle Diameter'; 'Bed Voidage'; 'Cross-Sectional Area'; ...
                   'Initial Total Molar Flow'; 'Inlet Density'; 'Total Mass Flowrate'; ...
                   'Total Volumetric Flowrate'; 'Superficial Velocity'; 'Gas Flux'};
     
-    Values = [params.reactor.diameter; params.ergun.particleDiamater; params.ergun.voidage; params.ergun.csArea; ...
+    Values = [params.reactor.diameter; params.ergun.particleDiameter; params.ergun.voidage; params.ergun.csArea; ...
               params.ergun.initialTotalMolarFlow; params.ergun.inletDensity; params.inlet.totalMassFlowrate; ...
               params.inlet.totalVolFlowrate; params.ergun.supVel; params.ergun.gasFlux];
     
