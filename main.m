@@ -29,8 +29,8 @@ params.inlet.temp = 1000; % K
 params.inlet.pres = 22*100000; % bar -> Pa
 
 % Arrhenius constants
-params.arr.preExpFactor = 1.7/100;     % m3 kg-1 s-1, actually (1.7 * 10^ 3)
-params.arr.activationEnergy = 68.5*1000;     % kJ mol-1 -> J mol-1
+params.arr.preExpFactor = 1.7 * 10^ -2;     % m3 kg-1 s-1, actually (1.7 * 10^ 3)
+params.arr.activationEnergy = 72*1000; % 68.5*1000;     % kJ mol-1 -> J mol-1
 params.arr.gasConst = 8.314;            % J/(mol·K)
 
 % Energy balance constants
@@ -121,39 +121,28 @@ params.ergun.gasFlux = params.ergun.inletDensity*params.ergun.supVel; % kg m-2 s
 params.ergun.mixtureViscocity = viscocityCalculation(params);
 disp(params.ergun.mixtureViscocity)
 
-% Display results in a table
-ParamNames = {'Reactor Diameter'; 'Particle Diameter'; 'Bed Voidage'; 'Cross-Sectional Area'; ...
-              'Initial Total Molar Flow'; 'Inlet Density'; 'Total Mass Flowrate'; ...
-              'Total Volumetric Flowrate'; 'Superficial Velocity'; 'Gas Flux'};
-
-Values = [params.reactor.diameter; params.ergun.particleDiamater; params.ergun.voidage; params.ergun.csArea; ...
-          params.ergun.initialTotalMolarFlow; params.ergun.inletDensity; params.inlet.totalMassFlowrate; ...
-          params.inlet.totalVolFlowrate; params.ergun.supVel; params.ergun.gasFlux];
-
-Units = {'m'; 'm'; '-'; 'm^2'; 'mol/s'; 'kg/m^3'; 'kg/s'; 'm^3/s'; 'm/s'; 'kg/m^2·s'};
-
-ResultsTable = table(ParamNames, Values, Units);
-disp(ResultsTable);
-%%
+% Heat capacities
 params.cpCO2 = schomate(params, params.inlet.temp / 1000, 'CO2'); % Convert to kK
 params.cpH2 = schomate(params, params.inlet.temp / 1000, 'H2');
 params.cpCO = schomate(params, params.inlet.temp / 1000, 'CO');
 params.cpCH4 = schomate(params, params.inlet.temp / 1000, 'CH4');
 
+%%
 % Define initial conditions 
-FA0 = params.eb.CO2.Fin; 
-FB0 = params.eb.H2.Fin; 
-FC0 = params.eb.CO.Fin;
-FD0 = 0; 
-T0 = params.inlet.temp; % K
-P0 = params.inlet.pres; % Pa
+init.FA0 = params.eb.CO2.Fin; 
+init.FB0 = params.eb.H2.Fin; 
+init.FC0 = params.eb.CO.Fin;
+init.FD0 = 0; 
+init.T0 = params.inlet.temp; % K
+init.P0 = params.inlet.pres; % Pa
 
 % Assign initial conditions to vector
-Y0 = [FA0, FB0, FC0, FD0, T0, P0];
+Y0 = [init.FA0, init.FB0, init.FC0, init.FD0, init.T0, init.P0];
 
+% Set span of catalyst mass to integrate over
 Wspan = [0 5000];
 
-% Pass params to odeSolver using an anonymous function
+% Pass params to odeSolver using odeSolver function
 [w,Y] = ode45(@(w,Y) odeSolver(w,Y,params), Wspan, Y0); 
 FA = Y(:,1); FB = Y(:,2); FC = Y(:,3); FD = Y(:,4); T = Y(:,5); P = Y(:,6);
 
@@ -170,45 +159,11 @@ for i = 1:length(w)
     reactorLength(i) = (4*w(i)/(params.ergun.bulkDensity*pi*(params.reactor.diameter^3)));
 end 
 
-% Plot CO2 conversion vs. reactor length
-figure;
-subplot(3,2,1)
-plot(reactorLength, conversionCO2, 'b', 'LineWidth', 1.5);
-xlabel('Reactor Length (m)');
-ylabel('CO_2 Conversion');
-title('CO_2 Conversion vs. Reactor Length (m)');
-grid on;
-
-% Plot CO2 conversion vs. Weight
-subplot(3,2,2);
-plot(w, conversionCO2, 'b', 'LineWidth', 1.5);
-xlabel('Catalyst Weight (kg)');
-ylabel('CO_2 Conversion');
-title('CO_2 Conversion vs. Temperature');
-grid on;
-
-% Plot all variables
-subplot(3,2,3);
-plot(w, FA, 'r', w, FB, 'b', w, FC, 'g', w, FD, 'm', 'LineWidth', 1.5);
-xlabel('Weight of Catalyst (kg)');
-ylabel('Molar Flow Rate (mol/s)');
-legend('CO2 (FA)', 'H2 (FB)', 'CO (FC)', 'H2O (FD)');
-title('Molar Flow Rates vs. Catalyst Weight');
-grid on;
-
-subplot(3,2,4);
-plot(w, T, 'k', 'LineWidth', 1.5);
-xlabel('Weight of Catalyst (kg)');
-ylabel('Temperature (K)');
-title('Temperature vs. Catalyst Weight');
-grid on;
-
-figure
-plot(w, P, 'k', 'LineWidth', 1.5);
-xlabel('Weight of Catalyst (kg)');
-ylabel('Pressure (Pa)');
-title('Pressure vs. Catalyst Weight');
-grid on;
+% Plot data
+plotOriginal(reactorLength,conversionCO2,w,FA,FB,FC,FD,T,P)
+% displayTable(params)
+optimiseTemp(init,params) % Temperature optimisation function
+optimisePressure(init, params) % Pressure optimisation function
 
 %%
 % ODE Solver Function
@@ -233,11 +188,7 @@ molFractionH2 = FB / totalMol;
 molFractionCO = FC / totalMol;
 molFractionH2O = FD / totalMol;
 
-% Assume pressure P = 1 atm (if needed, define it properly)
-% P = 22*100000; % Placeholder before pressure equation determined
-
 % Rate of reaction calculations
-% rRWGS = k * molFractionCO2 * molFractionH2 * ((P^2) / (params.arr.gasConst^2) * (T^2)); 
 rRWGS = (k*P^2/(params.arr.gasConst^2*T^2))*((molFractionCO2*molFractionH2)-((molFractionCO*molFractionH2O)/Keq));
 
 sumNcp = params.cpCO2*params.eb.CO2.Fin + params.cpH2*params.eb.H2.Fin + params.cpCO*params.eb.CO.Fin + params.cpCH4*params.eb.CH4.Fin;
@@ -253,10 +204,6 @@ dFD_dw = rRWGS;
 dT_dw = (params.eb.enthalpyReaction * rRWGS) / (sumNcp);
 
 dP_dw = (-beta/(params.ergun.csArea*(1-params.ergun.voidage)*params.ergun.particleDensity))*(params.inlet.pres/P)*(T/params.inlet.temp)*(totalMol/params.ergun.initialTotalMolarFlow);
-
-% dP_dw = (1/(params.ergun.bulkDensity*params.ergun.csArea))*(((150*((1-params.ergun.voidage)^2)*params.ergun.mixtureViscocity*params.ergun.supVel)/((params.ergun.voidage^3)*(params.ergun.particleDiamater^2)))+((1.75*(1-params.ergun.voidage)*params.ergun.inletDensity*(params.ergun.supVel^2))/((params.ergun.voidage^3)*params.ergun.particleDiamater)));
-
-% Page 169 elements Fogler
 
 % Output vector for ODE solver
 dYdt = [dFA_dw; dFB_dw; dFC_dw; dFD_dw; dT_dw; dP_dw];
@@ -339,6 +286,7 @@ function inletDensity = densityCalculation(params)
     inletDensity = (params.inlet.pres*averageInletMolarMass)/(params.arr.gasConst*params.inlet.temp);
 
 end
+
 %%
 function mixtureViscocity = viscocityCalculation(params)
     
@@ -381,3 +329,189 @@ function mixtureViscocity = viscocityCalculation(params)
     mixtureViscocity = sum(mu_m_y);
 
 end
+%%
+
+function plotOriginal(reactorLength,conversionCO2,w,FA,FB,FC,FD,T,P)
+
+    % Plot CO2 conversion vs. reactor length
+    figure(1);
+    subplot(3,2,1)
+    plot(reactorLength, conversionCO2, 'b', 'LineWidth', 1.5);
+    xlabel('Reactor Length (m)');
+    ylabel('CO_2 Conversion');
+    title('CO_2 Conversion vs. Reactor Length (m)');
+    grid on;
+    
+    % Plot CO2 conversion vs. Weight
+    subplot(3,2,2);
+    plot(w, conversionCO2, 'b', 'LineWidth', 1.5);
+    xlabel('Catalyst Weight (kg)');
+    ylabel('CO_2 Conversion');
+    title('CO_2 Conversion vs. Temperature');
+    grid on;
+    
+    % Plot all variables
+    subplot(3,2,3);
+    plot(w, FA, 'r', w, FB, 'b', w, FC, 'g', w, FD, 'm', 'LineWidth', 1.5);
+    xlabel('Weight of Catalyst (kg)');
+    ylabel('Molar Flow Rate (mol/s)');
+    legend('CO2 (FA)', 'H2 (FB)', 'CO (FC)', 'H2O (FD)');
+    title('Molar Flow Rates vs. Catalyst Weight');
+    grid on;
+    
+    subplot(3,2,4);
+    plot(w, T, 'k', 'LineWidth', 1.5);
+    xlabel('Weight of Catalyst (kg)');
+    ylabel('Temperature (K)');
+    title('Temperature vs. Catalyst Weight');
+    grid on;
+    
+    figure(2);
+    plot(w, P, 'k', 'LineWidth', 1.5);
+    xlabel('Weight of Catalyst (kg)');
+    ylabel('Pressure (Pa)');
+    title('Pressure vs. Catalyst Weight');
+    grid on;
+    hold off
+end
+
+%%
+function optimiseTemp(init, params)
+    % This function runs the ODE with 10 different temperatures, 
+    % 5 above and 5 below 1000K, in 50K increments.
+    
+    % Define temperature range (5 below and 5 above 1000K in 50K increments)
+    temps = 1000 + (-5:5) * 50;
+
+    % Store results
+    W_all = cell(1, length(temps)); % Store W values
+    T_all = cell(1, length(temps)); % Store Temperature profiles
+    FA_all = cell(1, length(temps)); % Store FA values
+    CO2ConversionAll = cell(1, length(temps)); % Store CO2 conversion
+
+    % Prepare figures before loop
+    figure(3); % For CO2 conversion profiles
+
+    % Loop over each temperature
+    for i = 1:length(temps)
+        T0 = temps(i);
+        
+        % Assign initial conditions to vector
+        Y0 = [init.FA0, init.FB0, init.FC0, init.FD0, T0, init.P0];
+        
+        % Define span for integration
+        Wspan = [0 5000];
+
+        % Solve ODE
+        [W, Y] = ode45(@(w, Y) odeSolver(w, Y, params), Wspan, Y0);
+
+        % Store data
+        W_all{i} = W; 
+        T_all{i} = Y(:,5); % Extract Temperature
+        FA_all{i} = Y(:,1); % Extract FA
+        
+        % Compute CO2 conversion
+        CO2ConversionAll{i} = (params.eb.CO2.Fin - FA_all{i}) / params.eb.CO2.Fin;
+
+        % Plot W vs. CO2 Conversion (only once outside the loop for figure 3)
+        figure(3);
+        plot(W, CO2ConversionAll{i}, 'DisplayName', sprintf('%dK', temps(i)));
+        hold on;
+    end 
+
+    % Formatting for CO2 Conversion Profile (after loop)
+    figure(3);
+    xlabel('W (kg catalyst)');
+    ylabel('CO2 Conversion');
+    title('CO2 Conversion vs. Catalyst Weight for Different Initial Temperatures');
+    legend show;
+    grid on;
+    hold off;
+end
+
+%%
+function optimisePressure(init, params)
+    % This function runs the ODE with 10 different pressure, 
+    % 5 above and 5 below 22bar, in 1bar increments - (In pascals)
+    
+    % Define temperature range (5 below and 5 above 1000K in 50K increments)
+    pressure = 22*100000 + (-5:5) * 100000;
+
+    % Store results
+    W_all = cell(1, length(pressure)); % Store W values
+    P_all = cell(1, length(pressure)); % Store Temperature profiles
+    FA_all = cell(1, length(pressure)); % Store FA values
+    CO2ConversionAll = cell(1, length(pressure)); % Store CO2 conversion
+
+    % Prepare figures before loop
+    figure(4); % For CO2 conversion profiles
+    figure(5);
+
+    % Loop over each temperature
+    for i = 1:length(pressure)
+        P0 = pressure(i);
+        
+        % Assign initial conditions to vector
+        Y0 = [init.FA0, init.FB0, init.FC0, init.FD0, init.T0, P0];
+        
+        % Define span for integration
+        Wspan = [0 5000];
+
+        % Solve ODE
+        [W, Y] = ode45(@(w, Y) odeSolver(w, Y, params), Wspan, Y0);
+
+        % Store data
+        W_all{i} = W; 
+        P_all{i} = Y(:,6); % Extract Pressure
+        FA_all{i} = Y(:,1); % Extract FA
+        
+        % Compute CO2 conversion
+        CO2ConversionAll{i} = (params.eb.CO2.Fin - FA_all{i}) / params.eb.CO2.Fin;
+
+        % Plot W vs. CO2 Conversion (only once outside the loop for figure 3)
+        figure(4);
+        plot(W, CO2ConversionAll{i}, 'DisplayName', sprintf('%dK', pressure(i)));
+        hold on;
+
+        % Plot W vs. CO2 Conversion (only once outside the loop for figure 3)
+        figure(5);
+        plot(W, P_all{i}, 'DisplayName', sprintf('%dK', pressure(i)));
+        hold on;
+    end 
+
+    % Formatting for CO2 Conversion Profile (after loop)
+    figure(4);
+    xlabel('W (kg catalyst)');
+    ylabel('CO2 Conversion');
+    title('CO2 Conversion vs. Catalyst Weight for Different Initial Temperatures');
+    legend show;
+    grid on;
+    hold off;
+    
+    % Formatting for CO2 Conversion Profile (after loop)
+    figure(5);
+    xlabel('W (kg catalyst)');
+    ylabel('Pressure (Pa)');
+    title('Pressure vs. Catalyst Weight for Different Initial Temperatures');
+    legend show;
+    grid on;
+    hold off;
+end
+
+%%
+function displayTable(params)
+    % Display results in a table
+    ParamNames = {'Reactor Diameter'; 'Particle Diameter'; 'Bed Voidage'; 'Cross-Sectional Area'; ...
+                  'Initial Total Molar Flow'; 'Inlet Density'; 'Total Mass Flowrate'; ...
+                  'Total Volumetric Flowrate'; 'Superficial Velocity'; 'Gas Flux'};
+    
+    Values = [params.reactor.diameter; params.ergun.particleDiamater; params.ergun.voidage; params.ergun.csArea; ...
+              params.ergun.initialTotalMolarFlow; params.ergun.inletDensity; params.inlet.totalMassFlowrate; ...
+              params.inlet.totalVolFlowrate; params.ergun.supVel; params.ergun.gasFlux];
+    
+    Units = {'m'; 'm'; '-'; 'm^2'; 'mol/s'; 'kg/m^3'; 'kg/s'; 'm^3/s'; 'm/s'; 'kg/m^2·s'};
+    
+    ResultsTable = table(ParamNames, Values, Units);
+    disp(ResultsTable);
+end
+
