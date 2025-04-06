@@ -17,7 +17,7 @@
 
 clc
 clear
-
+global thieleModLog effFactorLog %#ok<GVMIS> 
 % Define constants:
 params = struct(); % Initialise the params structure to hold all constants
 
@@ -128,6 +128,17 @@ params.ergun.gasFlux = params.ergun.inletDensity*params.ergun.supVel; % kg m-2 s
 params.ergun.mixtureViscocity = viscocityCalculation(params);
 
 %%
+% Thiele Modulus
+params.theile.charLength = params.ergun.particleDiameter/6;
+params.thiele.porosityParticle = 0.4; % Table B-1
+params.thiele.tortuosityParticle = 2.8; % Tbale B-1
+params.thiele.molDiff = ; % From DATABASE FIND THIS!!!!
+params.thiele.poreDiameter = ; % FIND
+params.thiele.knudsenDiff = (params.thiele.poreDiameter/3)*sqrt((8*params.arr.gasConst*T)/(pi*params.molMass.CO2)); % Same unit of molecular diff
+
+thieleModLog = []; 
+effFactorLog = []; 
+%%
 % Define initial conditions 
 init.FA0 = params.eb.CO2.Fin; 
 init.FB0 = params.eb.H2.Fin; 
@@ -162,6 +173,7 @@ end
 % Plot data and call optimisation functions
 % plotOriginal(reactorLength,conversionCO2,w,FA,FB,FC,FD,T,P)
 % displayTable(params)
+% plotThieleEff(thieleModLog, effFactorLog, T)
 % optimiseTemp(init,params) % Temperature optimisation function
 % optimisePressure(init, params) % Pressure optimisation function
 % optimiseParticleDiamater(init, params) % Particle diameter optimisation function
@@ -170,6 +182,8 @@ optimiseSuperficialVelocity(init, params)
 %%
 function dYdt = odeSolver(w,Y,params) %#ok<INUSD> 
     % ODE Solver Function
+
+    global thieleModLog effFactorLog %#ok<GVMIS> 
 
 % Extract state variables
 FA = Y(1); FB = Y(2); FC = Y(3); FD = Y(4); T = Y(5); P = Y(6);
@@ -198,6 +212,11 @@ sumNcp = params.cpCO2*params.eb.CO2.Fin + params.cpH2*params.eb.H2.Fin + params.
 
 % Beta constant for Ergun equation
 beta = ((params.ergun.gasFlux*(1-params.ergun.voidage))/(params.ergun.inletDensity*params.ergun.particleDiameter*params.ergun.voidage^3))*((150*(1-params.ergun.voidage)*params.ergun.mixtureViscocity)/params.ergun.particleDiameter)+(1.75*params.ergun.gasFlux);
+
+% Call the thiele modulus function
+[thieleMod,effFactor] = thieleModulus(params,T,k);
+thieleModLog(end+1,:) = [w, thieleMod];
+effFactorLog(end+1,:) = [w,effFactor];
 
 % Mole balance ODEs
 dFA_dw = -rRWGS;
@@ -385,6 +404,24 @@ function plotOriginal(reactorLength,conversionCO2,w,FA,FB,FC,FD,T,P)
     title('Pressure vs. Catalyst Weight');
     grid on;
     hold off
+end
+%%
+function [thieleMod,effFactor] = thieleModulus(params,T,k)
+    % Estimates the thiele modulus for a given set of reaction rates, taken
+    % when the ODE solver is run. 
+
+    knudsenDiff = (params.thiele.poreDiameter/3)*sqrt((8*params.arr.gasConst*T)/(pi*params.molMass.CO2)); % Same unit of molecular diff
+    poreDiff = ((1/params.thiele.molDiff)+(1/knudsenDiff))^-1;
+    effectiveDiff = (params.thiele.porosityParticle.params.thiele.tortuosityParticle)*poreDiff; 
+
+    thieleMod = params.thiele.charLength*sqrt(k/effectiveDiff);
+
+    effFactor = tanh(thieleMod)/thieleMod;
+end
+
+%%
+function plotThieleEff(thieleModLog, effFactorLog, T)
+    % Plot t against theile mod and effectiveness factor
 end
 
 %%
