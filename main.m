@@ -29,7 +29,7 @@ params.inlet.temp = 1000; % K
 params.inlet.pres = 22*100000; % bar -> Pa
 
 % Arrhenius constants
-params.arr.preExpFactor = 1.7 * 10^ -2; % m3 kg-1 s-1, actually (1.7 * 10^ 3)
+params.arr.preExpFactor = 1.7 * 10^-2; % m3 kg-1 s-1, actually (1.7 * 10^ 3)
 params.arr.activationEnergy = 68.5*1000; % kJ mol-1 -> J mol^-1
 params.arr.gasConst = 8.314; % J/(mol K)
 
@@ -119,7 +119,7 @@ params.ergun.inletDensity = densityCalculation(params); % kg/m3
 params.inlet.totalMassFlowrate = (340236.1+287420.26)/(60*60*24); % kgday-1 -> kg s-1
 params.inlet.totalVolFlowrate = params.inlet.totalMassFlowrate/params.ergun.inletDensity; % m3 s-1
 params.ergun.supVel = params.inlet.totalVolFlowrate/params.ergun.csArea; % m s-1
-disp(params.ergun.supVel)
+
 
 % Gas Flux
 params.ergun.gasFlux = params.ergun.inletDensity*params.ergun.supVel; % kg m-2 s-1
@@ -129,12 +129,11 @@ params.ergun.mixtureViscocity = viscocityCalculation(params);
 
 %%
 % Thiele Modulus and Effectiveness Factor
-params.theile.charLength = params.ergun.particleDiameter/6;
-params.thiele.porosityParticle = 0.4; % Table B-1
-params.thiele.tortuosityParticle = 2.8; % Tbale B-1
-params.thiele.molDiff = ; % From DATABASE FIND THIS!!!!
-params.thiele.poreDiameter = ; % FIND
-params.thiele.knudsenDiff = (params.thiele.poreDiameter/3)*sqrt((8*params.arr.gasConst*T)/(pi*params.molMass.CO2)); % Same unit of molecular diff
+params.thiele.charLength = params.ergun.particleDiameter/6; % m
+params.thiele.porosityParticle = 0.4; % Table B-1 CHECK
+params.thiele.tortuosityParticle = 1.6; % Table B-1 CHECK
+params.thiele.molDiff = 1.83*10^4; % From DATABASE FIND THIS!!!! PhD thesis, m2/s
+params.thiele.poreDiameter = 2.3*10^-7; % FIND
 
 thieleModLog = []; 
 effFactorLog = []; 
@@ -172,14 +171,14 @@ for i = 1:length(w)
 end 
 
 % Plot data and call optimisation functions
-% plotOriginal(reactorLength,conversionCO2,w,FA,FB,FC,FD,T,P)
+plotOriginal(reactorLength,conversionCO2,w,FA,FB,FC,FD,T,P)
 % displayTable(params)
 % plotThieleEff(thieleModLog, effFactorLog, T)
 % optimiseTemp(init,params) % Temperature optimisation function
 % optimisePressure(init, params) % Pressure optimisation function
 % optimiseParticleDiamater(init, params) % Particle diameter optimisation function
-optimiseSuperficialVelocity(init, params)
-
+% optimiseSuperficialVelocity(init, params)
+plotThieleEff(thieleModLog, effFactorLog, T)
 %%
 function dYdt = odeSolver(w,Y,params) %#ok<INUSD> 
     % ODE Solver Function
@@ -190,7 +189,7 @@ function dYdt = odeSolver(w,Y,params) %#ok<INUSD>
 FA = Y(1); FB = Y(2); FC = Y(3); FD = Y(4); T = Y(5); P = Y(6);
 
 % Rate constant calculations using the Arrhenius equation
-k = params.arr.preExpFactor * exp(-params.arr.activationEnergy / (params.arr.gasConst * T));
+k = params.arr.preExpFactor*exp(-params.arr.activationEnergy/(params.arr.gasConst * T));
 
 % Equilibrium calculations
 deltaHf = (params.CO.Hf+params.H2O.Hf)-(params.CO2.Hf+params.H2.Hf);
@@ -214,10 +213,18 @@ sumNcp = params.cpCO2*params.eb.CO2.Fin + params.cpH2*params.eb.H2.Fin + params.
 % Beta constant for Ergun equation
 beta = ((params.ergun.gasFlux*(1-params.ergun.voidage))/(params.ergun.inletDensity*params.ergun.particleDiameter*params.ergun.voidage^3))*((150*(1-params.ergun.voidage)*params.ergun.mixtureViscocity)/params.ergun.particleDiameter)+(1.75*params.ergun.gasFlux);
 
+% Thiele Modulus and Effectiveness factor calculations
+knudsenDiff = (params.thiele.poreDiameter/3)*sqrt((8*params.arr.gasConst*T)/(pi*(params.molMass.CO2/1000))); % m2/s
+poreDiff = ((1/params.thiele.molDiff)+(1/knudsenDiff))^-1; % m2/s
+effectiveDiff = (params.thiele.porosityParticle*params.thiele.tortuosityParticle)*poreDiff; % m2/s 
+
+thieleMod = params.thiele.charLength*sqrt((k*1000*w)/effectiveDiff);
+effFactor = (3/(thieleMod^2))*((thieleMod*coth(thieleMod))-1);
+
 % Call the thiele modulus function
-[thieleMod,effFactor] = thieleModulus(params,T,k);
-thieleModLog(end+1,:) = [w, thieleMod];
-effFactorLog(end+1,:) = [w,effFactor];
+% [thieleMod,effFactor] = thieleModulus(params,T,k,w);
+thieleModLog(end+1) = thieleMod;
+effFactorLog(end+1) = effFactor;
 
 % Mole balance ODEs
 dFA_dw = -rRWGS;
@@ -236,130 +243,62 @@ dYdt = [dFA_dw; dFB_dw; dFC_dw; dFD_dw; dT_dw; dP_dw];
 
 end
 
-%% Schomate Equation Function
-function cp = schomate(params,T,component)
-    % Solves Cp for a given temperature, depending on case given
-
-switch component
-    case 'CO2'
-        A = params.eb.CO2.A;
-        B = params.eb.CO2.B;
-        C = params.eb.CO2.C;
-        D = params.eb.CO2.D;
-        E = params.eb.CO2.E;
-    case 'H2'
-        A = params.eb.H2.A;
-        B = params.eb.H2.B;
-        C = params.eb.H2.C;
-        D = params.eb.H2.D;
-        E = params.eb.H2.E;
-    case 'CO'
-        A = params.eb.CO.A;
-        B = params.eb.CO.B;
-        C = params.eb.CO.C;
-        D = params.eb.CO.D;
-        E = params.eb.CO.E;
-    case 'CH4'
-        A = params.eb.CH4.A;
-        B = params.eb.CH4.B;
-        C = params.eb.CH4.C;
-        D = params.eb.CH4.D;
-        E = params.eb.CH4.E;
-end
-
-% Schomate equation for specific heat capacity (cp)
-cp = A + B*T + C*T^2 + D*T^3 + E/T^2 ;
-end
+%%
+% function [thieleMod,effFactor] = thieleModulus(params,T,k,w)
+%     % Estimates the thiele modulus for a given set of reaction rates, taken
+%     % when the ODE solver is run. 
+% 
+%     knudsenDiff = (params.thiele.poreDiameter/3)*sqrt((8*params.arr.gasConst*T)/(pi*(params.molMass.CO2/1000))); % m2/s
+%     poreDiff = ((1/params.thiele.molDiff)+(1/knudsenDiff))^-1; % m2/s
+%     effectiveDiff = (params.thiele.porosityParticle*params.thiele.tortuosityParticle)*poreDiff; % m2/s 
+%     
+%     thieleMod = params.thiele.charLength*sqrt(k*w/effectiveDiff);
+%     effFactor = (3/thieleMod^2)*(thieleMod*coth(thieleMod)-1);
+% end
 
 %%
-function checkCapacity(params)
-    % Plot all heat capacities, to ensure equation works. Only used for
-    % debugging
+function plotThieleEff(thieleModLog, effFactorLog, T)
+    % Plot Thiele modulus and effectiveness factor against temperature
+    
+    % Interpolate Thiele modulus data
+    thieleModInterp = interp1(1:length(thieleModLog), thieleModLog, linspace(1, length(thieleModLog), length(T)));
+    
+    % Interpolate effectiveness factor data
+    effInterp = interp1(1:length(effFactorLog), effFactorLog, linspace(1, length(effFactorLog), length(T)));
 
-% Define a range of temperatures for plotting
-T_range = linspace(300, 1500, 100);  % Temperature range from 300 K to 1500 K
+    % Perform polynomial regression on the interpolated Thiele modulus data
+    pThiele = polyfit(T, thieleModInterp, 2);
+    
+    % Evaluate the polynomial at the original temperature points for Thiele modulus
+    thieleModRegressed = polyval(pThiele, T);
+    
+    % Plot the Thiele modulus with regression line
+    figure(2);
+    plot(T, thieleModRegressed, 'r--', 'LineWidth', 2);  % Regression line
+    xlabel('Temperature [K]');
+    ylabel('Thiele Modulus');
+    title('Thiele Modulus vs Temperature with Regression');
+    grid on;
+    % Reverse the x-axis direction (Temperature from high to low)
+    set(gca, 'XDir', 'reverse');
 
-% Calculate cp for each component over the temperature range
-cp_CO2_values = arrayfun(@(T) schomate(params, T / 1000, 'CO2'), T_range);  % Convert T to kK
-cp_H2_values = arrayfun(@(T) schomate(params, T / 1000, 'H2'), T_range);
-cp_CO_values = arrayfun(@(T) schomate(params, T / 1000, 'CO'), T_range);
-cp_CH4_values = arrayfun(@(T) schomate(params, T / 1000, 'CH4'), T_range);
-
-% Plot cp values as a function of temperature
-figure;
-hold on;
-plot(T_range, cp_CO2_values, 'r', 'LineWidth', 1.5);
-plot(T_range, cp_H2_values, 'b', 'LineWidth', 1.5);
-plot(T_range, cp_CO_values, 'g', 'LineWidth', 1.5);
-plot(T_range, cp_CH4_values, 'm', 'LineWidth', 1.5);
-hold off;
-
-xlabel('Temperature (K)');
-ylabel('Specific Heat Capacity (cp) [J/mol·K]');
-legend('CO2', 'H2', 'CO', 'CH4');
-title('Specific Heat Capacity vs Temperature');
-grid on;
-
-end
-%%
-function inletDensity = densityCalculation(params)
-    % Calucaltes the weighted inlet density
-
-    % Weighted average molar mass
-    averageInletMolarMass = ((params.inlet.molFrac.CO2*params.molMass.CO2)+...
-                            (params.inlet.molFrac.H2*params.molMass.H2) + ...
-                            (params.inlet.molFrac.CO*params.molMass.CO) + ...
-                            (params.inlet.molFrac.CH4*params.molMass.CH4) + ...
-                            (params.inlet.molFrac.gases*params.molMass.gases))/1000; % gmol-1 -> kgmol-1
-
-    % Gas inlet density calculation
-    inletDensity = (params.inlet.pres*averageInletMolarMass)/(params.arr.gasConst*params.inlet.temp);
-
+    % Perform polynomial regression on the interpolated effectiveness factor data
+    pEff = polyfit(T, effInterp, 1);
+    
+    % Evaluate the polynomial at the original temperature points for effectiveness factor
+    effRegressed = polyval(pEff, T);
+    
+    % Plot the effectiveness factor with regression line
+    figure(3);
+    plot(T, effRegressed, 'g--', 'LineWidth', 2);  % Regression line
+    xlabel('Temperature [K]');
+    ylabel('Effectiveness Factor');
+    title('Effectiveness Factor vs Temperature with Regression');
+    grid on;
+    % Reverse the x-axis direction (Temperature from high to low)
+    set(gca, 'XDir', 'reverse');
 end
 
-%%
-function mixtureViscocity = viscocityCalculation(params)
-    % Calculates the viscocity of the gas, using Wilkes equation
-    
-    y = [params.inlet.molFrac.CO2, params.inlet.molFrac.H2, params.inlet.molFrac.CO, params.inlet.molFrac.CH4, params.inlet.molFrac.gases];
-    
-    % Dynamic viscosities (Pa.s) at 1000 K (approximate values)
-    mu = [41.25e-6, 18.77e-6, 40.4e-6, 38.6e-6, 3.5e-5];
-        %   https://www.engineeringtoolbox.com/carbon-dioxide-dynamic-kinematic-viscosity-temperature-pressure-d_2074.html#:~:text=Online%20calculator%2C%20figures%20and%20table%20showing%20dynamic%20and,deformation%20by%20shear%20stress%20or%20tensile%20stress%20.,
-        %   https://www.lmnoeng.com/Flow/GasViscosity.php
-        %   https://www.lmnoeng.com/Flow/GasViscosity.php
-        %   https://www.engineeringtoolbox.com/gases-absolute-dynamic-viscosity-d_1888.html?
-        %   The Viscosity and Thermal Conductivity of Ethane in the Limit of Zero Density 
-    
-    % Molecular weights (kg/mol*1000)
-    M = [params.molMass.CO2*1000, params.molMass.H2*1000, params.molMass.CO*1000, params.molMass.CH4*1000, params.molMass.gases*1000];
-    
-    n = length(y);
-    phi = zeros(n, n);
-    
-    % Compute interaction coefficients
-    for i = 1:n
-        for j = 1:n
-            if i ~= j
-                phi(i,j) = ((1 + (mu(i)/mu(j))^0.5 * (M(j)/M(i))^0.25)^2) / ...
-                           (sqrt(8) * (1 + M(i)/M(j)));
-            else
-                phi(i,j) = 1;
-            end
-        end
-    end
-    
-    % Compute mixture viscosity using Wilke's equation
-    denominator = sum(y .* phi, 2);
-    mu_m = sum((y .* mu) ./ denominator);
-    
-    % Element-wise multiplication of mu_m with y
-    mu_m_y = mu_m .* y;
-    
-    % Sum all the values of mu_m_y into a new variable
-    mixtureViscocity = sum(mu_m_y);
-
-end
 %%
 
 function plotOriginal(reactorLength,conversionCO2,w,FA,FB,FC,FD,T,P)
@@ -406,25 +345,6 @@ function plotOriginal(reactorLength,conversionCO2,w,FA,FB,FC,FD,T,P)
     grid on;
     hold off
 end
-%%
-function [thieleMod,effFactor] = thieleModulus(params,T,k)
-    % Estimates the thiele modulus for a given set of reaction rates, taken
-    % when the ODE solver is run. 
-
-    knudsenDiff = (params.thiele.poreDiameter/3)*sqrt((8*params.arr.gasConst*T)/(pi*params.molMass.CO2)); % Same unit of molecular diff
-    poreDiff = ((1/params.thiele.molDiff)+(1/knudsenDiff))^-1;
-    effectiveDiff = (params.thiele.porosityParticle.params.thiele.tortuosityParticle)*poreDiff; 
-
-    thieleMod = params.thiele.charLength*sqrt(k/effectiveDiff);
-
-    effFactor = tanh(thieleMod)/thieleMod;
-end
-
-%%
-function plotThieleEff(thieleModLog, effFactorLog, T)
-    % Plot t against theile mod and effectiveness factor
-end
-
 %%
 function optimiseTemp(init, params)
     % This function runs the ODE with 10 different temperatures, 
@@ -637,7 +557,7 @@ function optimiseSuperficialVelocity(init, params)
         params.ergun.csArea = (params.inlet.totalVolFlowrate/params.ergun.supVel);
         params.reactor.diameter = sqrt((4*params.ergun.csArea)/pi);
         params.ergun.gasFlux = params.ergun.inletDensity*params.ergun.supVel;
-        disp(params.ergun.gasFlux)
+        
         % Assign initial conditions to vector
         Y0 = [init.FA0, init.FB0, init.FC0, init.FD0, init.T0, init.P0];
         
@@ -702,3 +622,128 @@ function displayTable(params)
     disp(ResultsTable);
 end
 
+%% Schomate Equation Function
+function cp = schomate(params,T,component)
+    % Solves Cp for a given temperature, depending on case given
+
+switch component
+    case 'CO2'
+        A = params.eb.CO2.A;
+        B = params.eb.CO2.B;
+        C = params.eb.CO2.C;
+        D = params.eb.CO2.D;
+        E = params.eb.CO2.E;
+    case 'H2'
+        A = params.eb.H2.A;
+        B = params.eb.H2.B;
+        C = params.eb.H2.C;
+        D = params.eb.H2.D;
+        E = params.eb.H2.E;
+    case 'CO'
+        A = params.eb.CO.A;
+        B = params.eb.CO.B;
+        C = params.eb.CO.C;
+        D = params.eb.CO.D;
+        E = params.eb.CO.E;
+    case 'CH4'
+        A = params.eb.CH4.A;
+        B = params.eb.CH4.B;
+        C = params.eb.CH4.C;
+        D = params.eb.CH4.D;
+        E = params.eb.CH4.E;
+end
+
+% Schomate equation for specific heat capacity (cp)
+cp = A + B*T + C*T^2 + D*T^3 + E/T^2 ;
+end
+
+%%
+function inletDensity = densityCalculation(params)
+    % Calucaltes the weighted inlet density
+
+    % Weighted average molar mass
+    averageInletMolarMass = ((params.inlet.molFrac.CO2*params.molMass.CO2)+...
+                            (params.inlet.molFrac.H2*params.molMass.H2) + ...
+                            (params.inlet.molFrac.CO*params.molMass.CO) + ...
+                            (params.inlet.molFrac.CH4*params.molMass.CH4) + ...
+                            (params.inlet.molFrac.gases*params.molMass.gases))/1000; % gmol-1 -> kgmol-1
+
+    % Gas inlet density calculation
+    inletDensity = (params.inlet.pres*averageInletMolarMass)/(params.arr.gasConst*params.inlet.temp);
+
+end
+
+%%
+function mixtureViscocity = viscocityCalculation(params)
+    % Calculates the viscocity of the gas, using Wilkes equation
+    
+    y = [params.inlet.molFrac.CO2, params.inlet.molFrac.H2, params.inlet.molFrac.CO, params.inlet.molFrac.CH4, params.inlet.molFrac.gases];
+    
+    % Dynamic viscosities (Pa.s) at 1000 K (approximate values)
+    mu = [41.25e-6, 18.77e-6, 40.4e-6, 38.6e-6, 3.5e-5];
+        %   https://www.engineeringtoolbox.com/carbon-dioxide-dynamic-kinematic-viscosity-temperature-pressure-d_2074.html#:~:text=Online%20calculator%2C%20figures%20and%20table%20showing%20dynamic%20and,deformation%20by%20shear%20stress%20or%20tensile%20stress%20.,
+        %   https://www.lmnoeng.com/Flow/GasViscosity.php
+        %   https://www.lmnoeng.com/Flow/GasViscosity.php
+        %   https://www.engineeringtoolbox.com/gases-absolute-dynamic-viscosity-d_1888.html?
+        %   The Viscosity and Thermal Conductivity of Ethane in the Limit of Zero Density 
+    
+    % Molecular weights (kg/mol*1000)
+    M = [params.molMass.CO2*1000, params.molMass.H2*1000, params.molMass.CO*1000, params.molMass.CH4*1000, params.molMass.gases*1000];
+    
+    n = length(y);
+    phi = zeros(n, n);
+    
+    % Compute interaction coefficients
+    for i = 1:n
+        for j = 1:n
+            if i ~= j
+                phi(i,j) = ((1 + (mu(i)/mu(j))^0.5 * (M(j)/M(i))^0.25)^2) / ...
+                           (sqrt(8) * (1 + M(i)/M(j)));
+            else
+                phi(i,j) = 1;
+            end
+        end
+    end
+    
+    % Compute mixture viscosity using Wilke's equation
+    denominator = sum(y .* phi, 2);
+    mu_m = sum((y .* mu) ./ denominator);
+    
+    % Element-wise multiplication of mu_m with y
+    mu_m_y = mu_m .* y;
+    
+    % Sum all the values of mu_m_y into a new variable
+    mixtureViscocity = sum(mu_m_y);
+
+end
+
+%%
+function checkCapacity(params)
+    % Plot all heat capacities, to ensure equation works. Only used for
+    % debugging
+
+% Define a range of temperatures for plotting
+T_range = linspace(300, 1500, 100);  % Temperature range from 300 K to 1500 K
+
+% Calculate cp for each component over the temperature range
+cp_CO2_values = arrayfun(@(T) schomate(params, T / 1000, 'CO2'), T_range);  % Convert T to kK
+cp_H2_values = arrayfun(@(T) schomate(params, T / 1000, 'H2'), T_range);
+cp_CO_values = arrayfun(@(T) schomate(params, T / 1000, 'CO'), T_range);
+cp_CH4_values = arrayfun(@(T) schomate(params, T / 1000, 'CH4'), T_range);
+
+% Plot cp values as a function of temperature
+figure;
+hold on;
+plot(T_range, cp_CO2_values, 'r', 'LineWidth', 1.5);
+plot(T_range, cp_H2_values, 'b', 'LineWidth', 1.5);
+plot(T_range, cp_CO_values, 'g', 'LineWidth', 1.5);
+plot(T_range, cp_CH4_values, 'm', 'LineWidth', 1.5);
+hold off;
+
+xlabel('Temperature (K)');
+ylabel('Specific Heat Capacity (cp) [J/mol·K]');
+legend('CO2', 'H2', 'CO', 'CH4');
+title('Specific Heat Capacity vs Temperature');
+grid on;
+
+end
