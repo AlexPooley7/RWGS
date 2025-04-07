@@ -128,7 +128,7 @@ params.ergun.gasFlux = params.ergun.inletDensity*params.ergun.supVel; % kg m-2 s
 params.ergun.mixtureViscocity = viscocityCalculation(params);
 
 %%
-% Thiele Modulus
+% Thiele Modulus and Effectiveness Factor
 params.theile.charLength = params.ergun.particleDiameter/6;
 params.thiele.porosityParticle = 0.4; % Table B-1
 params.thiele.tortuosityParticle = 2.8; % Tbale B-1
@@ -138,6 +138,7 @@ params.thiele.knudsenDiff = (params.thiele.poreDiameter/3)*sqrt((8*params.arr.ga
 
 thieleModLog = []; 
 effFactorLog = []; 
+
 %%
 % Define initial conditions 
 init.FA0 = params.eb.CO2.Fin; 
@@ -225,7 +226,7 @@ dFC_dw = rRWGS;
 dFD_dw = rRWGS;
 
 % Temperature ODE
-dT_dw = (params.eb.enthalpyReaction * rRWGS) / (sumNcp);
+dT_dw = (-params.eb.enthalpyReaction * rRWGS) / (sumNcp);
 
 % Pressure ODE
 dP_dw = (-beta/(params.ergun.csArea*(1-params.ergun.voidage)*params.ergun.particleDensity))*(params.inlet.pres/P)*(T/params.inlet.temp)*(totalMol/params.ergun.initialTotalMolarFlow);
