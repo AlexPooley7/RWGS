@@ -29,7 +29,7 @@ params.inlet.temp = 1000; % K
 params.inlet.pres = 22*100000; % bar -> Pa
 
 % Arrhenius constants
-params.arr.preExpFactor = 1.7 * 10^-2; % m3 kg-1 s-1, actually (1.7 * 10^ 3)
+params.arr.preExpFactor = 1.7 * 10^-2; % m3 kg-1 s-1
 params.arr.activationEnergy = 68.5*1000; % kJ mol-1 -> J mol^-1
 params.arr.gasConst = 8.314; % J/(mol K)
 
@@ -83,6 +83,13 @@ params.eb.CH4.E = 0.7;
 params.H2O.Hf = -241.83*1000; % kJ/mol -> J/mol
 params.H2O.S = 188.84; % J/molK
 
+% Langmuir Hinshelwood
+params.LH.adsH2 = 6.12*10^-4* 101325; % atm-1
+params.LH.adsCO2 = 6.12*10^-4* 101325; % In terms of Conc
+params.LH.adsCO = 8.23*10^-5 * 101325; % atm-1
+params.LH.adsH2O = 1.77*10^5 * 101325; % In terms of Conc
+% params.LH.cTot = ;
+
 % Heat capacities
 params.cpCO2 = schomate(params, params.inlet.temp / 1000, 'CO2'); % Convert to kK
 params.cpH2 = schomate(params, params.inlet.temp / 1000, 'H2');
@@ -120,7 +127,6 @@ params.inlet.totalMassFlowrate = (340236.1+287420.26)/(60*60*24); % kgday-1 -> k
 params.inlet.totalVolFlowrate = params.inlet.totalMassFlowrate/params.ergun.inletDensity; % m3 s-1
 params.ergun.supVel = params.inlet.totalVolFlowrate/params.ergun.csArea; % m s-1
 
-
 % Gas Flux
 params.ergun.gasFlux = params.ergun.inletDensity*params.ergun.supVel; % kg m-2 s-1
 
@@ -129,11 +135,11 @@ params.ergun.mixtureViscocity = viscocityCalculation(params);
 
 %%
 % Thiele Modulus and Effectiveness Factor
-params.thiele.charLength = params.ergun.particleDiameter/6; % m
+params.thiele.charLength = params.ergun.particleDiameter/2; % m
 params.thiele.porosityParticle = 0.4; % Table B-1 CHECK
 params.thiele.tortuosityParticle = 1.6; % Table B-1 CHECK
 params.thiele.molDiff = 1.83*10^4; % From DATABASE FIND THIS!!!! PhD thesis, m2/s
-params.thiele.poreDiameter = 2.3*10^-7; % FIND
+params.thiele.poreDiameter = 2.3*10^-7; % 4-1
 
 thieleModLog = []; 
 effFactorLog = []; 
@@ -151,7 +157,7 @@ init.P0 = params.inlet.pres; % Pa
 Y0 = [init.FA0, init.FB0, init.FC0, init.FD0, init.T0, init.P0];
 
 % Set span of catalyst mass to integrate over
-Wspan = [0 5000];
+Wspan = [0 10000];
 
 % Pass params to odeSolver using odeSolver function
 [w,Y] = ode45(@(w,Y) odeSolver(w,Y,params), Wspan, Y0); 
@@ -178,125 +184,140 @@ plotOriginal(reactorLength,conversionCO2,w,FA,FB,FC,FD,T,P)
 % optimisePressure(init, params) % Pressure optimisation function
 % optimiseParticleDiamater(init, params) % Particle diameter optimisation function
 % optimiseSuperficialVelocity(init, params)
-plotThieleEff(thieleModLog, effFactorLog, T)
+plotThieleEff(thieleModLog, effFactorLog, w)
+
 %%
-function dYdt = odeSolver(w,Y,params) %#ok<INUSD> 
+function dYdt = odeSolver(w,Y,params) 
     % ODE Solver Function
 
     global thieleModLog effFactorLog %#ok<GVMIS> 
 
-% Extract state variables
-FA = Y(1); FB = Y(2); FC = Y(3); FD = Y(4); T = Y(5); P = Y(6);
+    % Extract state variables
+    FA = Y(1); FB = Y(2); FC = Y(3); FD = Y(4); T = Y(5); P = Y(6);
+    
+    % Rate constant calculations using the Arrhenius equation
+    k = params.arr.preExpFactor*exp(-(params.arr.activationEnergy/(params.arr.gasConst*T)));
+    % disp(k)
+    
+    % Equilibrium calculations
+    deltaHf = (params.CO.Hf+params.H2O.Hf)-(params.CO2.Hf+params.H2.Hf);
+    deltaS = (params.CO.S+params.H2O.S)-(params.CO2.S+params.H2.S);
+    deltaG = deltaHf -(T*deltaS);
+    Keq = exp(-deltaG/(params.arr.gasConst*T));
+    % disp(Keq)
+    
+    % Mole fraction calculations 
+    totalMol = FA + FB + FC + FD + params.inlet.CH4 + params.inlet.gases;
+    molFractionCO2 = FA / totalMol;
+    molFractionH2 = FB / totalMol;
+    molFractionCO = FC / totalMol;
+    molFractionH2O = FD / totalMol;
 
-% Rate constant calculations using the Arrhenius equation
-k = params.arr.preExpFactor*exp(-params.arr.activationEnergy/(params.arr.gasConst * T));
+    % Partial Pressures
+    ppCO2 = P*molFractionCO2;
+    ppH2 = P*molFractionH2;
+    ppCO = P*molFractionCO;
+    ppH2O = P*molFractionH2O;
 
-% Equilibrium calculations
-deltaHf = (params.CO.Hf+params.H2O.Hf)-(params.CO2.Hf+params.H2.Hf);
-deltaS = (params.CO.S+params.H2O.S)-(params.CO2.S+params.H2.S);
-deltaG = deltaHf -(T*deltaS);
-Keq = exp(-deltaG/(params.arr.gasConst*T));
+    % Keq conversion
+    Kr = Keq/8.314*T;
 
-% Mole fraction calculations 
-totalMol = FA + FB + FC + FD + params.inlet.CH4 + params.inlet.gases;
-molFractionCO2 = FA / totalMol;
-molFractionH2 = FB / totalMol;
-molFractionCO = FC / totalMol;
-molFractionH2O = FD / totalMol;
+    % Rate of reaction calculations
+    rRWGS = ((k*(P^2))/((params.arr.gasConst^2)*(T^2)))*((molFractionCO2*molFractionH2)-((molFractionCO*molFractionH2O)/Keq));
+    
+%     % LH
+%     kineticTerm = k*params.LH.adsCO2*params.LH.adsH2;
+%     drivingForce = (ppCO2*ppH2)-((ppH2O*ppCO)/Kr);
+%     adsorptionTerm = (1 + params.LH.adsCO2*ppCO2 + params.LH.adsH2*ppH2 + ppCO/params.LH.adsCO + ppH2O/params.LH.adsH2O)^2;
+%     rRWGS = (kineticTerm*drivingForce)/adsorptionTerm;
 
-% Rate of reaction calculations
-rRWGS = (k*P^2/(params.arr.gasConst^2*T^2))*((molFractionCO2*molFractionH2)-((molFractionCO*molFractionH2O)/Keq));
-
-% Eb denominator
-sumNcp = params.cpCO2*params.eb.CO2.Fin + params.cpH2*params.eb.H2.Fin + params.cpCO*params.eb.CO.Fin + params.cpCH4*params.eb.CH4.Fin;
-
-% Beta constant for Ergun equation
-beta = ((params.ergun.gasFlux*(1-params.ergun.voidage))/(params.ergun.inletDensity*params.ergun.particleDiameter*params.ergun.voidage^3))*((150*(1-params.ergun.voidage)*params.ergun.mixtureViscocity)/params.ergun.particleDiameter)+(1.75*params.ergun.gasFlux);
-
-% Thiele Modulus and Effectiveness factor calculations
-knudsenDiff = (params.thiele.poreDiameter/3)*sqrt((8*params.arr.gasConst*T)/(pi*(params.molMass.CO2/1000))); % m2/s
-poreDiff = ((1/params.thiele.molDiff)+(1/knudsenDiff))^-1; % m2/s
-effectiveDiff = (params.thiele.porosityParticle*params.thiele.tortuosityParticle)*poreDiff; % m2/s 
-
-thieleMod = params.thiele.charLength*sqrt((k*1000*w)/effectiveDiff);
-effFactor = (3/(thieleMod^2))*((thieleMod*coth(thieleMod))-1);
-
-% Call the thiele modulus function
-% [thieleMod,effFactor] = thieleModulus(params,T,k,w);
-thieleModLog(end+1) = thieleMod;
-effFactorLog(end+1) = effFactor;
-
-% Mole balance ODEs
-dFA_dw = -rRWGS;
-dFB_dw = -rRWGS;
-dFC_dw = rRWGS;
-dFD_dw = rRWGS;
-
-% Temperature ODE
-dT_dw = (-params.eb.enthalpyReaction * rRWGS) / (sumNcp);
-
-% Pressure ODE
-dP_dw = (-beta/(params.ergun.csArea*(1-params.ergun.voidage)*params.ergun.particleDensity))*(params.inlet.pres/P)*(T/params.inlet.temp)*(totalMol/params.ergun.initialTotalMolarFlow);
-
-% Output vector for ODE solver
-dYdt = [dFA_dw; dFB_dw; dFC_dw; dFD_dw; dT_dw; dP_dw];
+    % Eb denominator
+    sumNcp = params.cpCO2*params.eb.CO2.Fin + params.cpH2*params.eb.H2.Fin + params.cpCO*params.eb.CO.Fin + params.cpCH4*params.eb.CH4.Fin;
+    
+    % Beta constant for Ergun equation
+    beta = ((params.ergun.gasFlux*(1-params.ergun.voidage))/(params.ergun.inletDensity*params.ergun.particleDiameter*params.ergun.voidage^3))*((150*(1-params.ergun.voidage)*params.ergun.mixtureViscocity)/params.ergun.particleDiameter)+(1.75*params.ergun.gasFlux);
+    
+    % Thiele Modulus and Effectiveness factor calculations
+    knudsenDiff = (params.thiele.poreDiameter/3)*sqrt((8*params.arr.gasConst*T)/(pi*(params.molMass.CO2/1000))); % m2/s
+    poreDiff = ((1/params.thiele.molDiff)+(1/knudsenDiff))^-1; % m2/s
+    effectiveDiff = (params.thiele.porosityParticle*params.thiele.tortuosityParticle)*poreDiff; % m2/s 
+    
+    thieleMod = sqrt((k*1000*w*params.thiele.charLength^2)/effectiveDiff);
+    
+    if thieleMod == 0 || isnan(thieleMod)
+        effFactor = 1;  % Or some other default safe value
+    else
+        effFactor = (1/thieleMod)*((1/tanh(3*thieleMod))-(1/(3*thieleMod)));
+    end
+    
+    % Call the thiele modulus function
+    % [thieleMod,effFactor] = thieleModulus(params,T,k,w);
+    thieleModLog(end+1) = thieleMod;
+    effFactorLog(end+1) = effFactor;
+    
+    % Mole balance ODEs
+    dFA_dw = -rRWGS*effFactor;
+    dFB_dw = -rRWGS*effFactor;
+    dFC_dw = rRWGS*effFactor;
+    dFD_dw = rRWGS*effFactor;
+    
+    % Temperature ODE
+    dT_dw = (-params.eb.enthalpyReaction * rRWGS*effFactor)/(sumNcp);
+    
+    % Pressure ODE
+    dP_dw = (-beta/(params.ergun.csArea*(1-params.ergun.voidage)*params.ergun.particleDensity))*(params.inlet.pres/P)*(T/params.inlet.temp)*(totalMol/params.ergun.initialTotalMolarFlow);
+    
+    % Output vector for ODE solver
+    dYdt = [dFA_dw; dFB_dw; dFC_dw; dFD_dw; dT_dw; dP_dw];
 
 end
 
 %%
-% function [thieleMod,effFactor] = thieleModulus(params,T,k,w)
-%     % Estimates the thiele modulus for a given set of reaction rates, taken
-%     % when the ODE solver is run. 
-% 
-%     knudsenDiff = (params.thiele.poreDiameter/3)*sqrt((8*params.arr.gasConst*T)/(pi*(params.molMass.CO2/1000))); % m2/s
-%     poreDiff = ((1/params.thiele.molDiff)+(1/knudsenDiff))^-1; % m2/s
-%     effectiveDiff = (params.thiele.porosityParticle*params.thiele.tortuosityParticle)*poreDiff; % m2/s 
-%     
-%     thieleMod = params.thiele.charLength*sqrt(k*w/effectiveDiff);
-%     effFactor = (3/thieleMod^2)*(thieleMod*coth(thieleMod)-1);
-% end
-
-%%
-function plotThieleEff(thieleModLog, effFactorLog, T)
+function plotThieleEff(thieleModLog, effFactorLog, w)
     % Plot Thiele modulus and effectiveness factor against temperature
     
     % Interpolate Thiele modulus data
-    thieleModInterp = interp1(1:length(thieleModLog), thieleModLog, linspace(1, length(thieleModLog), length(T)));
+    thieleModInterp = interp1(1:length(thieleModLog), thieleModLog, linspace(1, length(thieleModLog), length(w)));
     
     % Interpolate effectiveness factor data
-    effInterp = interp1(1:length(effFactorLog), effFactorLog, linspace(1, length(effFactorLog), length(T)));
+    effInterp = interp1(1:length(effFactorLog), effFactorLog, linspace(1, length(effFactorLog), length(w)));
 
     % Perform polynomial regression on the interpolated Thiele modulus data
-    pThiele = polyfit(T, thieleModInterp, 2);
+    pThiele = polyfit(w, thieleModInterp, 2);
     
     % Evaluate the polynomial at the original temperature points for Thiele modulus
-    thieleModRegressed = polyval(pThiele, T);
+
+    thieleModRegressed = polyval(pThiele, w);
     
     % Plot the Thiele modulus with regression line
     figure(2);
-    plot(T, thieleModRegressed, 'r--', 'LineWidth', 2);  % Regression line
-    xlabel('Temperature [K]');
+    plot(w, thieleModRegressed, 'r--', 'LineWidth', 2);  % Regression line
+    xlabel('Weight [kg]');
     ylabel('Thiele Modulus');
-    title('Thiele Modulus vs Temperature with Regression');
-    grid on;
-    % Reverse the x-axis direction (Temperature from high to low)
-    set(gca, 'XDir', 'reverse');
+    title('Thiele Modulus vs Weight');
+    xlim([0 4000])
+    grid off;
 
-    % Perform polynomial regression on the interpolated effectiveness factor data
-    pEff = polyfit(T, effInterp, 1);
-    
-    % Evaluate the polynomial at the original temperature points for effectiveness factor
-    effRegressed = polyval(pEff, T);
+    %     % Perform polynomial regression on the interpolated effectiveness factor data
+    %     pEff = polyfit(w, effInterp, 1);
+    %     
+    %     % Evaluate the polynomial at the original temperature points for effectiveness factor
+    %     effRegressed = polyval(pEff, w);
     
     % Plot the effectiveness factor with regression line
     figure(3);
-    plot(T, effRegressed, 'g--', 'LineWidth', 2);  % Regression line
-    xlabel('Temperature [K]');
+    loglog(thieleModLog, effFactorLog, 'g--', 'LineWidth', 2);  % Regression line
+    xlabel('Thiele Modulus');
     ylabel('Effectiveness Factor');
-    title('Effectiveness Factor vs Temperature with Regression');
-    grid on;
-    % Reverse the x-axis direction (Temperature from high to low)
-    set(gca, 'XDir', 'reverse');
+    title('Effectiveness Factor vs Thiele Modulus');
+    xticks([0.1 0.2 0.4 0.6 1 2 4 6 10]);
+    xticklabels({'0.1','0.2','0.4','0.6','1','2','4','6','10'});
+    yticks([0.1 0.2 0.4 0.6 0.8 1]);
+    yticklabels({'0.1','0.2','0.4','0.6','0.8','1'});
+    xlim([0.1 10]);
+    ylim([0 1])
+    grid off;
+    
 end
 
 %%
@@ -311,6 +332,7 @@ function plotOriginal(reactorLength,conversionCO2,w,FA,FB,FC,FD,T,P)
     xlabel('Reactor Length (m)');
     ylabel('CO_2 Conversion');
     title('CO_2 Conversion vs. Reactor Length (m)');
+    yline(0.376, '--r', 'LineWidth', 1.2);  % Add horizontal line
     grid on;
     
     % Plot CO2 conversion vs. Weight
@@ -319,6 +341,7 @@ function plotOriginal(reactorLength,conversionCO2,w,FA,FB,FC,FD,T,P)
     xlabel('Catalyst Weight (kg)');
     ylabel('CO_2 Conversion');
     title('CO_2 Conversion vs. Temperature');
+    yline(0.376, '--r', 'LineWidth', 1.2);  % Add horizontal line
     grid on;
     
     % Plot all variables
