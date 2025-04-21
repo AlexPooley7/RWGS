@@ -102,6 +102,7 @@ params.reactor.diameter = 0.75; % m
 params.ergun.bulkDensity = 1200; % kg/m3
 params.ergun.particleDensity = 1910; % kg/m3
 params.ergun.voidage = (params.ergun.particleDensity-params.ergun.bulkDensity)/params.ergun.particleDensity; % -
+
 params.ergun.particleDiameter = 0.006; % m
 params.ergun.csArea = (pi*params.reactor.diameter^2)/4; % m2
 params.ergun.initialTotalMolarFlow = params.eb.CO2.Fin+params.eb.H2.Fin + params.eb.CO.Fin + params.inlet.CH4 + params.inlet.gases; % mol/s
@@ -121,7 +122,7 @@ params.molMass.CH4 = 16.04; % g/mol
 params.molMass.gases = 35; % g/mol
 % Density
 params.ergun.inletDensity = densityCalculation(params); % kg/m3
-
+disp(params.ergun.inletDensity)
 % Volumetric flowrate calculation
 params.inlet.totalMassFlowrate = (340236.1+287420.26)/(60*60*24); % kgday-1 -> kg s-1
 params.inlet.totalVolFlowrate = params.inlet.totalMassFlowrate/params.ergun.inletDensity; % m3 s-1
@@ -129,6 +130,7 @@ params.ergun.supVel = params.inlet.totalVolFlowrate/params.ergun.csArea; % m s-1
 
 % Gas Flux
 params.ergun.gasFlux = params.ergun.inletDensity*params.ergun.supVel; % kg m-2 s-1
+disp(params.ergun.gasFlux)
 
 % Viscocity
 params.ergun.mixtureViscocity = viscocityCalculation(params);
@@ -138,7 +140,7 @@ params.ergun.mixtureViscocity = viscocityCalculation(params);
 params.thiele.charLength = params.ergun.particleDiameter/2; % m
 params.thiele.porosityParticle = 0.4; % Table B-1 CHECK
 params.thiele.tortuosityParticle = 1.6; % Table B-1 CHECK
-params.thiele.molDiff = 1.83*10^4; % From DATABASE FIND THIS!!!! PhD thesis, m2/s
+params.thiele.molDiff = 1.83*10^-4; % From DATABASE FIND THIS!!!! PhD thesis, m2/s
 params.thiele.poreDiameter = 2.3*10^-7; % 4-1
 
 thieleModLog = []; 
@@ -202,9 +204,12 @@ function dYdt = odeSolver(w,Y,params)
     % Equilibrium calculations
     deltaHf = (params.CO.Hf+params.H2O.Hf)-(params.CO2.Hf+params.H2.Hf);
     deltaS = (params.CO.S+params.H2O.S)-(params.CO2.S+params.H2.S);
-    deltaG = deltaHf -(T*deltaS);
+    deltaG = deltaHf -(1000*deltaS);
     Keq = exp(-deltaG/(params.arr.gasConst*T));
-    % disp(Keq)
+    disp(deltaHf);
+    disp(deltaS);
+    disp(deltaG);
+    disp(Keq)
     
     % Mole fraction calculations 
     totalMol = FA + FB + FC + FD + params.inlet.CH4 + params.inlet.gases;
@@ -239,13 +244,14 @@ function dYdt = odeSolver(w,Y,params)
     
     % Thiele Modulus and Effectiveness factor calculations
     knudsenDiff = (params.thiele.poreDiameter/3)*sqrt((8*params.arr.gasConst*T)/(pi*(params.molMass.CO2/1000))); % m2/s
+    
     poreDiff = ((1/params.thiele.molDiff)+(1/knudsenDiff))^-1; % m2/s
     effectiveDiff = (params.thiele.porosityParticle*params.thiele.tortuosityParticle)*poreDiff; % m2/s 
     
-    thieleMod = sqrt((k*1000*w*params.thiele.charLength^2)/effectiveDiff);
+    thieleMod = sqrt((k*10000*w*params.thiele.charLength^2)/effectiveDiff);
     
     if thieleMod == 0 || isnan(thieleMod)
-        effFactor = 1;  % Or some other default safe value
+        effFactor = 1;  
     else
         effFactor = (1/thieleMod)*((1/tanh(3*thieleMod))-(1/(3*thieleMod)));
     end
@@ -263,7 +269,7 @@ function dYdt = odeSolver(w,Y,params)
     
     % Temperature ODE
     dT_dw = (-params.eb.enthalpyReaction * rRWGS*effFactor)/(sumNcp);
-    
+    % dT_dw = (rRWGS*effFactor)/(sumNcp)*(-params.eb.enthalpyReaction+(T*(params.cpCO2 + params.cpH2 + params.cpCO + params.cpCH4)));
     % Pressure ODE
     dP_dw = (-beta/(params.ergun.csArea*(1-params.ergun.voidage)*params.ergun.particleDensity))*(params.inlet.pres/P)*(T/params.inlet.temp)*(totalMol/params.ergun.initialTotalMolarFlow);
     
@@ -306,18 +312,19 @@ function plotThieleEff(thieleModLog, effFactorLog, w)
     
     % Plot the effectiveness factor with regression line
     figure(3);
-    loglog(thieleModLog, effFactorLog, 'g--', 'LineWidth', 2);  % Regression line
+    loglog(thieleModLog, effFactorLog, 'g-', 'LineWidth', 2);  % Regression line
     xlabel('Thiele Modulus');
     ylabel('Effectiveness Factor');
-    title('Effectiveness Factor vs Thiele Modulus');
-    xticks([0.1 0.2 0.4 0.6 1 2 4 6 10]);
-    xticklabels({'0.1','0.2','0.4','0.6','1','2','4','6','10'});
+    xticks([0.1 0.2 0.4 0.6 1 2 4 6 10 20 30 40]);
+    xticklabels({'0.1','0.2','0.4','0.6','1','2','4','6','10','20','30','40'});
     yticks([0.1 0.2 0.4 0.6 0.8 1]);
     yticklabels({'0.1','0.2','0.4','0.6','0.8','1'});
-    xlim([0.1 10]);
+    xlim([0.1 50]);
     ylim([0 1])
     grid off;
     
+    
+
 end
 
 %%
