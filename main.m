@@ -29,7 +29,7 @@ params.inlet.temp = 1000; % K
 params.inlet.pres = 22*100000; % bar -> Pa
 
 % Arrhenius constants
-params.arr.preExpFactor = 1.7 * 10^-2; % m3 kg-1 s-1
+params.arr.preExpFactor = 1.7 * 10^3; % m3 kg-1 s-1
 params.arr.activationEnergy = 68.5*1000; % kJ mol-1 -> J mol^-1
 params.arr.gasConst = 8.314; % J/(mol K)
 
@@ -80,6 +80,11 @@ params.eb.CH4.D = 5.9;
 params.eb.CH4.E = 0.7;
 
 % Water
+params.eb.H2O.A = 30.09; 
+params.eb.H2O.B = 6.8325;
+params.eb.H2O.C = 6.7934;
+params.eb.H2O.D = -2.5345;
+params.eb.H2O.E = 0.0821;
 params.H2O.Hf = -241.83*1000; % kJ/mol -> J/mol
 params.H2O.S = 188.84; % J/molK
 
@@ -98,7 +103,7 @@ params.cpCH4 = schomate(params, params.inlet.temp / 1000, 'CH4');
 
 %%
 % Ergun equation
-params.reactor.diameter = 0.75; % m
+params.reactor.diameter = 1.5; % m
 params.ergun.bulkDensity = 1200; % kg/m3
 params.ergun.particleDensity = 1910; % kg/m3
 params.ergun.voidage = (params.ergun.particleDensity-params.ergun.bulkDensity)/params.ergun.particleDensity; % -
@@ -122,7 +127,7 @@ params.molMass.CH4 = 16.04; % g/mol
 params.molMass.gases = 35; % g/mol
 % Density
 params.ergun.inletDensity = densityCalculation(params); % kg/m3
-disp(params.ergun.inletDensity)
+
 % Volumetric flowrate calculation
 params.inlet.totalMassFlowrate = (340236.1+287420.26)/(60*60*24); % kgday-1 -> kg s-1
 params.inlet.totalVolFlowrate = params.inlet.totalMassFlowrate/params.ergun.inletDensity; % m3 s-1
@@ -130,7 +135,6 @@ params.ergun.supVel = params.inlet.totalVolFlowrate/params.ergun.csArea; % m s-1
 
 % Gas Flux
 params.ergun.gasFlux = params.ergun.inletDensity*params.ergun.supVel; % kg m-2 s-1
-disp(params.ergun.gasFlux)
 
 % Viscocity
 params.ergun.mixtureViscocity = viscocityCalculation(params);
@@ -146,7 +150,42 @@ params.thiele.poreDiameter = 2.3*10^-7; % 4-1
 thieleModLog = []; 
 effFactorLog = []; 
 
-%%
+params.shortcut.pressureInit = params.inlet.pres;
+params.shortcut.temperatureInit = params.inlet.temp;
+
+%% Shortcut
+init.FA0 = params.eb.CO2.Fin; 
+init.FB0 = params.eb.H2.Fin; 
+init.FC0 = params.eb.CO.Fin;
+init.FD0 = 0; 
+
+% Assign initial conditions to vector
+Y0 = [init.FA0, init.FB0, init.FC0, init.FD0];
+
+% Set span of catalyst mass to integrate over
+Wspan = [0 10000];
+
+% Pass params to odeSolver using odeSolver function
+[w,Y] = ode45(@(w,Y) odeSolverShortcut(w,Y,params), Wspan, Y0); 
+FA = Y(:,1); FB = Y(:,2); FC = Y(:,3); FD = Y(:,4);
+
+% Conversion CO2-> in-out/in
+% Calculate conversion values
+conversionCO2 = zeros(length(FA), 1);
+for i = 1:length(FA)
+    conversionCO2(i) = (params.eb.CO2.Fin - FA(i)) / (params.eb.CO2.Fin);
+end
+
+% Calculate reactor length
+reactorLength = zeros(length(w), 1);
+for i = 1:length(w)
+    reactorLength(i) = (4*w(i)/(params.ergun.bulkDensity*pi*(params.reactor.diameter^3)));
+end 
+
+% Plot data and call optimisation functions
+plotOriginalShortcut(reactorLength,conversionCO2,w,FA,FB,FC,FD)
+
+%% Rigorous
 % Define initial conditions 
 init.FA0 = params.eb.CO2.Fin; 
 init.FB0 = params.eb.H2.Fin; 
@@ -179,15 +218,64 @@ for i = 1:length(w)
 end 
 
 % Plot data and call optimisation functions
-plotOriginal(reactorLength,conversionCO2,w,FA,FB,FC,FD,T,P)
+% plotOriginal(reactorLength,conversionCO2,w,FA,FB,FC,FD,T,P)
 % displayTable(params)
 % plotThieleEff(thieleModLog, effFactorLog, T)
 % optimiseTemp(init,params) % Temperature optimisation function
 % optimisePressure(init, params) % Pressure optimisation function
 % optimiseParticleDiamater(init, params) % Particle diameter optimisation function
 % optimiseSuperficialVelocity(init, params)
-plotThieleEff(thieleModLog, effFactorLog, w)
+% plotThieleEff(thieleModLog, effFactorLog, w)
 
+%%
+function dYdt = odeSolverShortcut(w,Y,params) 
+    % ODE Solver Function
+
+    global thieleModLog effFactorLog %#ok<GVMIS> 
+
+    % Extract state variables
+    FA = Y(1); FB = Y(2); FC = Y(3); FD = Y(4);
+    
+    T = params.shortcut.temperatureInit;
+    % Rate constant calculations using the Arrhenius equation
+    k = (params.arr.preExpFactor*10^-5)*exp(-(params.arr.activationEnergy/(params.arr.gasConst*T)));
+    
+    % Mole fraction calculations 
+    totalMol = FA + FB + FC + FD + params.inlet.CH4 + params.inlet.gases;
+    molFractionCO2 = FA / totalMol;
+    molFractionH2 = FB / totalMol;
+    molFractionCO = FC / totalMol;
+    molFractionH2O = FD / totalMol;
+    
+    P = params.shortcut.pressureInit;
+
+    % Partial Pressures
+    ppCO2 = P*molFractionCO2;
+    ppH2 = P*molFractionH2;
+    ppCO = P*molFractionCO;
+    ppH2O = P*molFractionH2O;
+
+    % Rate of reaction calculations
+    rRWGS = ((k*(P^2))/((params.arr.gasConst^2)*(T^2)))*(molFractionCO2*molFractionH2);
+            
+    % Eb denominator
+    params.cpCO2 = schomate(params, T / 1000, 'CO2'); % Convert to kK
+    params.cpH2 = schomate(params, T / 1000, 'H2');
+    params.cpCO = schomate(params, T / 1000, 'CO');
+    params.cpH2O = schomate(params,T / 1000, 'H2O');
+    params.cpCH4 = schomate(params, T / 1000, 'CH4');
+    sumNcp = params.cpCO2*FA + params.cpH2*FB + params.cpCO*FC + params.cpH2O*FD + params.cpCH4*params.eb.CH4.Fin;
+    
+    % Mole balance ODEs
+    dFA_dw = -rRWGS;
+    dFB_dw = -rRWGS;
+    dFC_dw = rRWGS;
+    dFD_dw = rRWGS;
+       
+    % Output vector for ODE solver
+    dYdt = [dFA_dw; dFB_dw; dFC_dw; dFD_dw];
+
+end
 %%
 function dYdt = odeSolver(w,Y,params) 
     % ODE Solver Function
@@ -198,18 +286,13 @@ function dYdt = odeSolver(w,Y,params)
     FA = Y(1); FB = Y(2); FC = Y(3); FD = Y(4); T = Y(5); P = Y(6);
     
     % Rate constant calculations using the Arrhenius equation
-    k = params.arr.preExpFactor*exp(-(params.arr.activationEnergy/(params.arr.gasConst*T)));
-    % disp(k)
+    k = (params.arr.preExpFactor*10^-5)*exp(-(params.arr.activationEnergy/(params.arr.gasConst*T)));
     
     % Equilibrium calculations
     deltaHf = (params.CO.Hf+params.H2O.Hf)-(params.CO2.Hf+params.H2.Hf);
     deltaS = (params.CO.S+params.H2O.S)-(params.CO2.S+params.H2.S);
     deltaG = deltaHf -(1000*deltaS);
     Keq = exp(-deltaG/(params.arr.gasConst*T));
-    disp(deltaHf);
-    disp(deltaS);
-    disp(deltaG);
-    disp(Keq)
     
     % Mole fraction calculations 
     totalMol = FA + FB + FC + FD + params.inlet.CH4 + params.inlet.gases;
@@ -229,16 +312,22 @@ function dYdt = odeSolver(w,Y,params)
 
     % Rate of reaction calculations
     rRWGS = ((k*(P^2))/((params.arr.gasConst^2)*(T^2)))*((molFractionCO2*molFractionH2)-((molFractionCO*molFractionH2O)/Keq));
-    
-%     % LH
-%     kineticTerm = k*params.LH.adsCO2*params.LH.adsH2;
-%     drivingForce = (ppCO2*ppH2)-((ppH2O*ppCO)/Kr);
-%     adsorptionTerm = (1 + params.LH.adsCO2*ppCO2 + params.LH.adsH2*ppH2 + ppCO/params.LH.adsCO + ppH2O/params.LH.adsH2O)^2;
-%     rRWGS = (kineticTerm*drivingForce)/adsorptionTerm;
+            
+    % % LH
+    % kineticTerm = k*params.LH.adsCO2*params.LH.adsH2;
+    % drivingForce = (ppCO2*ppH2)-((ppH2O*ppCO)/Kr);
+    % adsorptionTerm = (1 + params.LH.adsCO2*ppCO2 + params.LH.adsH2*ppH2 + ppCO/params.LH.adsCO + ppH2O/params.LH.adsH2O)^2;
+    % rRWGS = (kineticTerm*drivingForce)/adsorptionTerm;
 
     % Eb denominator
-    sumNcp = params.cpCO2*params.eb.CO2.Fin + params.cpH2*params.eb.H2.Fin + params.cpCO*params.eb.CO.Fin + params.cpCH4*params.eb.CH4.Fin;
-    
+    params.cpCO2 = schomate(params, T / 1000, 'CO2'); % Convert to kK
+    params.cpH2 = schomate(params, T / 1000, 'H2');
+    params.cpCO = schomate(params, T / 1000, 'CO');
+    params.cpH2O = schomate(params,T / 1000, 'H2O');
+    params.cpCH4 = schomate(params, T / 1000, 'CH4');
+    % sumNcp = params.cpCO2*params.eb.CO2.Fin + params.cpH2*params.eb.H2.Fin + params.cpCO*params.eb.CO.Fin + params.cpCH4*params.eb.CH4.Fin;
+    sumNcp = params.cpCO2*FA + params.cpH2*FB + params.cpCO*FC + params.cpH2O*FD + params.cpCH4*params.eb.CH4.Fin;
+
     % Beta constant for Ergun equation
     beta = ((params.ergun.gasFlux*(1-params.ergun.voidage))/(params.ergun.inletDensity*params.ergun.particleDiameter*params.ergun.voidage^3))*((150*(1-params.ergun.voidage)*params.ergun.mixtureViscocity)/params.ergun.particleDiameter)+(1.75*params.ergun.gasFlux);
     
@@ -248,7 +337,7 @@ function dYdt = odeSolver(w,Y,params)
     poreDiff = ((1/params.thiele.molDiff)+(1/knudsenDiff))^-1; % m2/s
     effectiveDiff = (params.thiele.porosityParticle*params.thiele.tortuosityParticle)*poreDiff; % m2/s 
     
-    thieleMod = sqrt((k*10000*w*params.thiele.charLength^2)/effectiveDiff);
+    thieleMod = sqrt((k*1000*w*params.thiele.charLength^2)/effectiveDiff);
     
     if thieleMod == 0 || isnan(thieleMod)
         effFactor = 1;  
@@ -269,7 +358,9 @@ function dYdt = odeSolver(w,Y,params)
     
     % Temperature ODE
     dT_dw = (-params.eb.enthalpyReaction * rRWGS*effFactor)/(sumNcp);
-    % dT_dw = (rRWGS*effFactor)/(sumNcp)*(-params.eb.enthalpyReaction+(T*(params.cpCO2 + params.cpH2 + params.cpCO + params.cpCH4)));
+    % dT_dw = 0;
+    % (rRWGS*effFactor)/(sumNcp)*(-params.eb.enthalpyReaction-(T*(params.cpCO2 + params.cpH2 + params.cpCO + params.cpCH4 + params.cpH2O)));
+    
     % Pressure ODE
     dP_dw = (-beta/(params.ergun.csArea*(1-params.ergun.voidage)*params.ergun.particleDensity))*(params.inlet.pres/P)*(T/params.inlet.temp)*(totalMol/params.ergun.initialTotalMolarFlow);
     
@@ -292,7 +383,6 @@ function plotThieleEff(thieleModLog, effFactorLog, w)
     pThiele = polyfit(w, thieleModInterp, 2);
     
     % Evaluate the polynomial at the original temperature points for Thiele modulus
-
     thieleModRegressed = polyval(pThiele, w);
     
     % Plot the Thiele modulus with regression line
@@ -303,12 +393,6 @@ function plotThieleEff(thieleModLog, effFactorLog, w)
     title('Thiele Modulus vs Weight');
     xlim([0 4000])
     grid off;
-
-    %     % Perform polynomial regression on the interpolated effectiveness factor data
-    %     pEff = polyfit(w, effInterp, 1);
-    %     
-    %     % Evaluate the polynomial at the original temperature points for effectiveness factor
-    %     effRegressed = polyval(pEff, w);
     
     % Plot the effectiveness factor with regression line
     figure(3);
@@ -322,13 +406,10 @@ function plotThieleEff(thieleModLog, effFactorLog, w)
     xlim([0.1 50]);
     ylim([0 1])
     grid off;
-    
-    
-
+ 
 end
 
 %%
-
 function plotOriginal(reactorLength,conversionCO2,w,FA,FB,FC,FD,T,P)
     % Plot the pre optimisation reactor
 
@@ -374,6 +455,41 @@ function plotOriginal(reactorLength,conversionCO2,w,FA,FB,FC,FD,T,P)
     title('Pressure vs. Catalyst Weight');
     grid on;
     hold off
+
+end
+
+%%
+function plotOriginalShortcut(reactorLength,conversionCO2,w,FA,FB,FC,FD)
+    % Plot the pre optimisation reactor
+
+    % Plot CO2 conversion vs. reactor length
+    figure(1);
+    subplot(3,2,1)
+    plot(reactorLength, conversionCO2, 'b', 'LineWidth', 1.5);
+    xlabel('Reactor Length (m)');
+    ylabel('CO_2 Conversion');
+    title('CO_2 Conversion vs. Reactor Length (m)');
+    yline(0.376, '--r', 'LineWidth', 1.2);  % Add horizontal line
+    grid on;
+    
+    % Plot CO2 conversion vs. Weight
+    subplot(3,2,2);
+    plot(w, conversionCO2, 'b', 'LineWidth', 1.5);
+    xlabel('Catalyst Weight (kg)');
+    ylabel('CO_2 Conversion');
+    title('CO_2 Conversion vs. Temperature');
+    yline(0.376, '--r', 'LineWidth', 1.2);  % Add horizontal line
+    grid on;
+    
+    % Plot all variables
+    subplot(3,2,3);
+    plot(w, FA, 'r', w, FB, 'b', w, FC, 'g', w, FD, 'm', 'LineWidth', 1.5);
+    xlabel('Weight of Catalyst (kg)');
+    ylabel('Molar Flow Rate (mol/s)');
+    legend('CO2 (FA)', 'H2 (FB)', 'CO (FC)', 'H2O (FD)');
+    title('Molar Flow Rates vs. Catalyst Weight');
+    grid on;
+
 end
 %%
 function optimiseTemp(init, params)
@@ -477,6 +593,7 @@ function optimisePressure(init, params)
         figure(5);
         plot(W, P_all{i}, 'DisplayName', sprintf('%dPa', pressure(i)));
         hold on;
+    
     end 
 
     % Formatting for CO2 Conversion Profile (after loop)
@@ -485,7 +602,7 @@ function optimisePressure(init, params)
     ylabel('CO2 Conversion');
     title('CO2 Conversion vs. Catalyst Weight for Different Initial Pressures');
     legend show;
-    grid on;
+    grid off;
     hold off;
     
     % Formatting for CO2 Conversion Profile (after loop)
@@ -494,8 +611,9 @@ function optimisePressure(init, params)
     ylabel('Pressure (Pa)');
     title('Pressure vs. Catalyst Weight for Different Initial Pressures');
     legend show;
-    grid on;
+    grid off;
     hold off;
+
 end
 
 %%
@@ -675,6 +793,12 @@ switch component
         C = params.eb.CO.C;
         D = params.eb.CO.D;
         E = params.eb.CO.E;
+    case 'H2O'
+        A = params.eb.H2O.A;
+        B = params.eb.H2O.B;
+        C = params.eb.H2O.C;
+        D = params.eb.H2O.D;
+        E = params.eb.H2O.E;
     case 'CH4'
         A = params.eb.CH4.A;
         B = params.eb.CH4.B;
