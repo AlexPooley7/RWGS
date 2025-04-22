@@ -89,10 +89,10 @@ params.H2O.Hf = -241.83*1000; % kJ/mol -> J/mol
 params.H2O.S = 188.84; % J/molK
 
 % Langmuir Hinshelwood
-params.LH.adsH2 = 6.12*10^-4* 101325; % atm-1
-params.LH.adsCO2 = 6.12*10^-4* 101325; % In terms of Conc
+params.LH.adsH2 = 6.12*10^-4 * 101325; % atm-1
+params.LH.adsCO2 = 8.23*10^-5 * 101325; % Made up!
 params.LH.adsCO = 8.23*10^-5 * 101325; % atm-1
-params.LH.adsH2O = 1.77*10^5 * 101325; % In terms of Conc
+params.LH.adsH2O = 1.77*10^-5 * 101325; % In terms of Conc
 % params.LH.cTot = ;
 
 % Heat capacities
@@ -183,7 +183,7 @@ for i = 1:length(w)
 end 
 
 % Plot data and call optimisation functions
-plotOriginalShortcut(reactorLength,conversionCO2,w,FA,FB,FC,FD)
+%plotOriginalShortcut(reactorLength,conversionCO2,w,FA,FB,FC,FD)
 
 %% Rigorous
 % Define initial conditions 
@@ -218,7 +218,7 @@ for i = 1:length(w)
 end 
 
 % Plot data and call optimisation functions
-% plotOriginal(reactorLength,conversionCO2,w,FA,FB,FC,FD,T,P)
+plotOriginal(reactorLength,conversionCO2,w,FA,FB,FC,FD,T,P)
 % displayTable(params)
 % plotThieleEff(thieleModLog, effFactorLog, T)
 % optimiseTemp(init,params) % Temperature optimisation function
@@ -307,17 +307,18 @@ function dYdt = odeSolver(w,Y,params)
     ppCO = P*molFractionCO;
     ppH2O = P*molFractionH2O;
 
+    % Rate of reaction calculations
+    % rRWGS = ((k*(P^2))/((params.arr.gasConst^2)*(T^2)))*((molFractionCO2*molFractionH2)-((molFractionCO*molFractionH2O)/Keq))
+       
     % Keq conversion
     Kr = Keq/8.314*T;
-
-    % Rate of reaction calculations
-    rRWGS = ((k*(P^2))/((params.arr.gasConst^2)*(T^2)))*((molFractionCO2*molFractionH2)-((molFractionCO*molFractionH2O)/Keq));
-            
-    % % LH
-    % kineticTerm = k*params.LH.adsCO2*params.LH.adsH2;
-    % drivingForce = (ppCO2*ppH2)-((ppH2O*ppCO)/Kr);
-    % adsorptionTerm = (1 + params.LH.adsCO2*ppCO2 + params.LH.adsH2*ppH2 + ppCO/params.LH.adsCO + ppH2O/params.LH.adsH2O)^2;
-    % rRWGS = (kineticTerm*drivingForce)/adsorptionTerm;
+    cT = 10^2.5;
+    
+    % LH
+    kineticTerm = k*params.LH.adsCO2*params.LH.adsH2*cT^2;
+    drivingForce = (ppCO2*ppH2)-((ppH2O*ppCO)/Kr);
+    adsorptionTerm = (1 + params.LH.adsCO2*ppCO2 + params.LH.adsH2*ppH2 + ppCO/params.LH.adsCO + ppH2O/params.LH.adsH2O)^2;
+    rRWGS = (kineticTerm*drivingForce)/adsorptionTerm;
 
     % Eb denominator
     params.cpCO2 = schomate(params, T / 1000, 'CO2'); % Convert to kK
