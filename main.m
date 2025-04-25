@@ -218,14 +218,15 @@ conversionCO2LH = conversion(params,FALH);
 reactorLengthLH = reactorLengthFunc(params,wLH);
 
 %%  Plot data and call optimisation functions
-plotOriginal(reactorLengthp,conversionCO2p,wp,FAp,FBp,FCp,FDp,Tp,Pp,reactorLengthLH,conversionCO2LH,wLH,FALH,FBLH,FCLH,FDLH,TLH,PLH)
+% plotOriginal(reactorLengthp,conversionCO2p,wp,FAp,FBp,FCp,FDp,Tp,Pp,reactorLengthLH,conversionCO2LH,wLH,FALH,FBLH,FCLH,FDLH,TLH,PLH)
 % displayTable(params)
 % plotThieleEff(thieleModLog, effFactorLog, wLH)
-% optimiseTemp(init,params) % Temperature optimisation function
+optimiseTemp(init,params) % Temperature optimisation function
 % optimisePressure(init, params) % Pressure optimisation function
 % optimiseParticleDiamater(init, params) % Particle diameter optimisation function
 % optimiseSuperficialVelocity(init, params)
-% plotThieleEff(thieleModLog, effFactorLog, w)
+% optimiseParticleAndBedDiameter(init, params)
+% plotThieleEff(thieleModLog, effFactorLog, wLH)
 
 %%
 function dYdt = odeSolverShortcut(w,Y,params) 
@@ -324,7 +325,7 @@ function dYdt = odeSolver(w,Y,params, condition)
     poreDiff = ((1/params.thiele.molDiff)+(1/knudsenDiff))^-1; % m2/s
     effectiveDiff = (params.thiele.porosityParticle*params.thiele.tortuosityParticle)*poreDiff; % m2/s 
     
-    thieleMod = sqrt((k*1000*w*params.thiele.charLength^2)/effectiveDiff);
+    thieleMod = sqrt((k*1000*w*(params.ergun.particleDiameter/2)^2)/effectiveDiff);
     
     if thieleMod == 0 || isnan(thieleMod)
         effFactor = 1;  
@@ -504,10 +505,10 @@ function plotThieleEff(thieleModLog, effFactorLog, wLH)
     xlabel('Thiele Modulus');
     ylabel('Effectiveness Factor');
     xticks([0.1 0.2 0.4 0.6 1 2 4 6 10 20 30 40]);
-    xticklabels({'0.1','0.2','0.4','0.6','1','2','4','6','10','20','30','40'});
+    xticklabels({'0.1','0.2','0.4','0.6','1','2','4','6'});
     yticks([0.1 0.2 0.4 0.6 0.8 1]);
     yticklabels({'0.1','0.2','0.4','0.6','0.8','1'});
-    xlim([0.1 50]);
+    xlim([0.1 7]);
     ylim([0 1])
     grid off;
  
@@ -547,88 +548,148 @@ function plotOriginalShortcut(reactorLength,conversionCO2,w,FA,FB,FC,FD)
 end
 %%
 function optimiseTemp(init, params)
-    % This function runs the ODE with 10 different temperatures, 
-    % 5 above and 5 below 1000K, in 50K increments.
-    
-    % Define temperature range (5 below and 5 above 1000K in 50K increments)
+    % Temperature range
     temps = 1000 + (-5:5) * 50;
 
     % Store results
-    W_all = cell(1, length(temps)); % Store W values
-    T_all = cell(1, length(temps)); % Store Temperature profiles
-    FA_all = cell(1, length(temps)); % Store FA values
-    CO2ConversionAll = cell(1, length(temps)); % Store CO2 conversion
+    wAll = cell(1, length(temps));
+    faAll = cell(1, length(temps));
+    co2ConversionAll = cell(1, length(temps));
+    wAtTargetConversion = nan(1, length(temps));
 
-    % Prepare figures before loop
-    figure(3); % For CO2 conversion profiles
+    targetConversion = 0.376;
+
+    figure(1); % CO2 conversion profiles
 
     % Loop over each temperature
     for i = 1:length(temps)
-        T0 = temps(i);
-        
-        % Assign initial conditions to vector
-        Y0 = [init.FA0, init.FB0, init.FC0, init.FD0, T0, init.P0];
-        
-        % Define span for integration
-        Wspan = [0 5000];
+        t0 = temps(i);
+        y0 = [init.FA0, init.FB0, init.FC0, init.FD0, t0, init.P0];
+        wSpan = [0 10000];
+        condition = 'LH';
 
         % Solve ODE
-        [W, Y] = ode45(@(w, Y) odeSolver(w, Y, params), Wspan, Y0);
+        [w, y] = ode45(@(w, y) odeSolver(w, y, params, condition), wSpan, y0);
 
-        % Store data
-        W_all{i} = W; 
-        T_all{i} = Y(:,5); % Extract Temperature
-        FA_all{i} = Y(:,1); % Extract FA
-        
-        % Compute CO2 conversion
-        CO2ConversionAll{i} = (params.eb.CO2.Fin - FA_all{i}) / params.eb.CO2.Fin;
+        % Store and process
+        wAll{i} = w;
+        faAll{i} = y(:,1);
+        co2Conversion = (params.eb.CO2.Fin - y(:,1)) / params.eb.CO2.Fin;
+        co2ConversionAll{i} = co2Conversion;
 
-        % Plot W vs. CO2 Conversion (only once outside the loop for figure 3)
-        figure(3);
-        plot(W, CO2ConversionAll{i}, 'DisplayName', sprintf('%dK', temps(i)));
+        % Find catalyst weight for target conversion
+        idx = find(co2Conversion >= targetConversion, 1);
+        if ~isempty(idx)
+            wAtTargetConversion(i) = w(idx);
+        end
+
+        % Plot CO2 conversion
+        figure(1);
+        plot(w, co2Conversion, 'DisplayName', sprintf('%dK', t0));
         hold on;
-    end 
+    end
 
-    % Formatting for CO2 Conversion Profile (after loop)
-    figure(3);
-    xlabel('W (kg catalyst)');
+    % Final formatting for CO2 conversion plot
+    figure(1);
+    xlabel('Catalyst Mass [kg]');
     ylabel('CO2 Conversion');
-    title('CO2 Conversion vs. Catalyst Weight for Different Initial Temperatures');
-    legend show;
-    grid on;
+    legend('show', 'Location', 'best');
+    yline(targetConversion , '--r', 'DisplayName', 'Desired Conversion', 'LineWidth', 1.2);
+    grid off;
     hold off;
+
+    % Extract valid data for regression and cost analysis
+    validIdx = ~isnan(wAtTargetConversion);
+    tValid = temps(validIdx);
+    wValid = wAtTargetConversion(validIdx);
+
+    % Plot Temperature vs Catalyst Weight
+    figure(2);
+    xlabel('Temperature [K]');
+    ylabel('Catalyst Weight for 0.376 Conversion [kg]');
+    title('Catalyst Weight Required vs Temperature');
+    grid off;
+    hold on;
+    % Polynomial regression
+    p = polyfit(tValid, wValid, 2);
+    weightFcn = @(T) polyval(p, T);
+    Tplot = linspace(min(tValid), max(tValid), 100);
+    plot(Tplot, weightFcn(Tplot), 'b-', 'DisplayName', 'Polynomial Fit');
+    legend('show', 'Location', 'best');
+    hold off;
+
+    % Costing parameters
+    Cc = 22.46;     % $/kg, catalyst cost
+    Ch = 0.1026/(60*1000);    % $/W, heating cost per watt
+    Tamb = 300;     % K, ambient temperature
+
+    % Define cost functions
+    catalystCostFcn = @(T) Cc * weightFcn(T);
+    heatingPowerFcn = @(T) ...
+        (schomate(params,T/1000, 'CO2') * params.eb.CO2.Fin + ...
+         schomate(params,T/1000, 'H2')  * params.eb.H2.Fin  + ...
+         schomate(params,T/1000, 'CO')  * params.eb.CO.Fin  + ...
+         schomate(params,T/1000, 'CH4') * params.eb.CH4.Fin) * (T - Tamb); % Watts
+    heatingCostFcn = @(T) Ch * heatingPowerFcn(T);
+    totalCostFcn = @(T) catalystCostFcn(T) + heatingCostFcn(T);
+
+    % Optimise temperature to minimise total cost
+    Topt = fminbnd(totalCostFcn, min(tValid), max(tValid));
+
+    % Plot cost vs temperature
+    totalCost = arrayfun(totalCostFcn, Tplot);
+    figure(3);
+    plot(Tplot, totalCost, 'r-', 'LineWidth', 2, 'DisplayName', 'Total Cost');
+    hold on;
+    plot(Topt, totalCostFcn(Topt), 'ro', 'MarkerSize', 8, 'DisplayName', ...
+    sprintf('Optimal T = %.1f K', Topt));
+    xlabel('Temperature [K]');
+    ylabel('Total Cost [$]');
+    legend('show', 'Location', 'best');
+    grid off;
+    hold off;
+
+    % Evaluate catalyst weight at the optimal temperature
+    optimalCatalystWeight = weightFcn(Topt);
+
+    % Display the result
+    fprintf('Optimal Temperature: %.2f K\n', Topt);
+    fprintf('Catalyst Weight at Optimal Temperature: %.2f kg\n', optimalCatalystWeight);
 end
+
 
 %%
 function optimisePressure(init, params)
-    % This function runs the ODE with 10 different pressure, 
-    % 5 above and 5 below 22bar, in 1bar increments - (In pascals)
+    % This function runs the ODE with 10 different pressures, 
+    % 5 above and 5 below 22 bar, in 1 bar increments - (In pascals)
     
-    % Define temperature range (5 below and 5 above 1000K in 50K increments)
-    pressure = 22*100000 + (-5:5) * 100000;
+    % Define pressure range (5 below and 5 above 22 bar in 1 bar increments)
+    pressure = 22 * 100000 + (-5:5) * 100000;
 
     % Store results
     W_all = cell(1, length(pressure)); % Store W values
-    P_all = cell(1, length(pressure)); % Store Temperature profiles
+    P_all = cell(1, length(pressure)); % Store Pressure profiles
     FA_all = cell(1, length(pressure)); % Store FA values
     CO2ConversionAll = cell(1, length(pressure)); % Store CO2 conversion
 
     % Prepare figures before loop
     figure(4); % For CO2 conversion profiles
-    figure(5);
+    figure(5); % For pressure profiles
+    figure(6); % For pressure drop profiles
 
-    % Loop over each temperature
+    % Loop over each pressure
     for i = 1:length(pressure)
         P0 = pressure(i);
         
         % Assign initial conditions to vector
-        Y0 = [init.FA0, init.FB0, init.FC0, init.FD0, init.T0, P0];
+        Y0 = [init.FA0, init.FB0, init.FC0, init.FD0, 1100, P0];
         
         % Define span for integration
         Wspan = [0 5000];
+        condition = 'LH';
 
         % Solve ODE
-        [W, Y] = ode45(@(w, Y) odeSolver(w, Y, params), Wspan, Y0);
+        [W, Y] = ode45(@(w, Y) odeSolver(w, Y, params, condition), Wspan, Y0);
 
         % Store data
         W_all{i} = W; 
@@ -638,174 +699,363 @@ function optimisePressure(init, params)
         % Compute CO2 conversion
         CO2ConversionAll{i} = (params.eb.CO2.Fin - FA_all{i}) / params.eb.CO2.Fin;
 
-        % Plot W vs. CO2 Conversion (only once outside the loop for figure 3)
+        % Plot W vs. CO2 Conversion
         figure(4);
-        plot(W, CO2ConversionAll{i}, 'DisplayName', sprintf('%dPa', pressure(i)));
+        plot(W, CO2ConversionAll{i}, 'DisplayName', sprintf('%dbar', pressure(i)/100000));
         hold on;
 
-        % Plot W vs. CO2 Conversion (only once outside the loop for figure 3)
+        % Plot W vs. Pressure
         figure(5);
-        plot(W, P_all{i}, 'DisplayName', sprintf('%dPa', pressure(i)));
+        plot(W, P_all{i}, 'DisplayName', sprintf('%dbar', pressure(i)/100000));
         hold on;
-    
+
+        % Calculate pressure drop
+        pressureDrop = P0 - P_all{i};
+
+        % Plot W vs. Pressure Drop
+        figure(6);
+        plot(W, pressureDrop, 'DisplayName', sprintf('%dbar', P0 / 100000));
+        hold on;
     end 
 
-    % Formatting for CO2 Conversion Profile (after loop)
+    % Formatting for CO2 Conversion Profile
     figure(4);
-    xlabel('W (kg catalyst)');
+    xlabel('Catalyst Mass (kg)');
     ylabel('CO2 Conversion');
-    title('CO2 Conversion vs. Catalyst Weight for Different Initial Pressures');
-    legend show;
-    grid off;
-    hold off;
-    
-    % Formatting for CO2 Conversion Profile (after loop)
-    figure(5);
-    xlabel('W (kg catalyst)');
-    ylabel('Pressure (Pa)');
-    title('Pressure vs. Catalyst Weight for Different Initial Pressures');
+    yline(0.376 , '--r', 'DisplayName', 'Desired Conversion', 'LineWidth', 1.2);
     legend show;
     grid off;
     hold off;
 
+    % Formatting for Pressure Profile
+    figure(5);
+    xlabel('Catalyst Mass (kg)');
+    ylabel('Pressure (Pa)');
+    legend show;
+    grid off;
+    hold off;
+
+    % Formatting for Pressure Drop Profile
+    figure(6);
+    xlabel('Catalyst Mass (kg)');
+    ylabel('Pressure Drop (Pa)');
+    legend show;
+    grid off;
+    hold off;
 end
 
 %%
 function optimiseParticleDiamater(init, params)
-    % This function runs the ODE with 10 different catalyst diamaters.
     
     diameters = params.ergun.particleDiameter + (-5:5) * 0.0005;
 
-    % Store results
-    W_all = cell(1, length(diameters)); % Store W values
-    P_all = cell(1, length(diameters)); % Store Temperature profiles
-    FA_all = cell(1, length(diameters)); % Store FA values
-    CO2ConversionAll = cell(1, length(diameters)); % Store CO2 conversion
+    W_all = cell(1, length(diameters));      
+    P_all = cell(1, length(diameters));      
+    FA_all = cell(1, length(diameters));     
+    CO2ConversionAll = cell(1, length(diameters));  
 
-    % Prepare figures before loop
-    figure(6); % For CO2 conversion profiles
-    figure(7);
+    P0 = 23 * 100000;  % Initial pressure in Pa
+    targetConversion = 0.376;
 
-    % Loop over each temperature
+    figure(6); % CO2 conversion profiles
+    figure(7); % Pressure profiles
+    figure(8); % Pressure drop profiles
+
     for i = 1:length(diameters)
         params.ergun.particleDiameter = diameters(i);
-        
-        % Assign initial conditions to vector
-        Y0 = [init.FA0, init.FB0, init.FC0, init.FD0, init.T0, init.P0];
-        
-        % Define span for integration
-        Wspan = [0 5000];
 
-        % Solve ODE
-        [W, Y] = ode45(@(w, Y) odeSolver(w, Y, params), Wspan, Y0);
+        Y0 = [init.FA0, init.FB0, init.FC0, init.FD0, 1100, P0];
+        Wspan = [0 3000];
+        condition = 'LH';
 
-        % Store data
-        W_all{i} = W; 
-        P_all{i} = Y(:,6); % Extract Pressure
-        FA_all{i} = Y(:,1); % Extract FA
-        
-        % Compute CO2 conversion
+        [W, Y] = ode45(@(w, Y) odeSolver(w, Y, params, condition), Wspan, Y0);
+
+        W_all{i} = W;
+        P_all{i} = Y(:,6);
+        FA_all{i} = Y(:,1);
+
         CO2ConversionAll{i} = (params.eb.CO2.Fin - FA_all{i}) / params.eb.CO2.Fin;
 
-        % Plot W vs. CO2 Conversion (only once outside the loop for figure 3)
+        % Plot CO2 Conversion
         figure(6);
-        plot(W, CO2ConversionAll{i}, 'DisplayName', sprintf('%dm', diameters(i)));
+        plot(W, CO2ConversionAll{i}, 'DisplayName', sprintf('%.4fm', diameters(i)));
         hold on;
 
-        % Plot W vs. CO2 Conversion (only once outside the loop for figure 3)
+        % Plot Pressure
         figure(7);
-        plot(W, P_all{i}, 'DisplayName', sprintf('%dm', diameters(i)));
+        plot(W, P_all{i}, 'DisplayName', sprintf('%.4fm', diameters(i)));
         hold on;
-    end 
 
-    % Formatting for CO2 Conversion Profile (after loop)
+        % Plot Pressure Drop
+        pressureDrop = P0 - P_all{i};
+        figure(8);
+        plot(W, pressureDrop, 'DisplayName', sprintf('%.4fm', diameters(i)));
+        hold on;
+    end
+
     figure(6);
-    xlabel('W (kg catalyst)');
+    xlabel('Catalyst Mass (kg)');
     ylabel('CO2 Conversion');
-    title('CO2 Conversion vs. Catalyst Weight for Different Catalyst Diameters');
+    yline(0.376 , '--r', 'DisplayName', 'Desired Conversion', 'LineWidth', 1.2);
     legend show;
-    grid on;
+    grid off;
     hold off;
-    
-    % Formatting for CO2 Conversion Profile (after loop)
+
     figure(7);
-    xlabel('W (kg catalyst)');
+    xlabel('Catalyst Mass (kg)');
     ylabel('Pressure (Pa)');
-    title('Pressure vs. Catalyst Weight for Different Catalyst Diameters');
     legend show;
-    grid on;
+    grid off;
+    hold off;
+
+    figure(8);
+    xlabel('Catalyst Mass (kg)');
+    ylabel('Pressure Drop (Pa)');
+    legend show;
+    grid off;
+    hold off;
+
+    % Now find catalyst mass and pressure drop at target conversion
+    objectives = zeros(1, length(diameters));
+
+    for i = 1:length(diameters)
+        conv = CO2ConversionAll{i};
+        W = W_all{i};
+        P = P_all{i};
+
+        % Find first index where conversion >= targetConversion
+        idx = find(conv >= targetConversion, 1, 'first');
+
+        if isempty(idx)
+            % Conversion not reached within Wspan, assign large value or NaN
+            objectives(i) = NaN;
+            continue
+        end
+
+        W_target = W(idx);
+        deltaP = P0 - P(idx);
+
+        if deltaP == 0
+            deltaP = 1e-6; % avoid div zero
+        end
+
+        % Objective: catalyst mass / pressure drop (lower is better)
+        objectives(i) = W_target / deltaP;
+    end
+
+    % Plot objective vs diameter (ignore NaNs)
+    figure;
+    validIdx = ~isnan(objectives);
+    plot(diameters(validIdx), objectives(validIdx), '-o', 'LineWidth', 1.5);
+    xlabel('Particle Diameter (m)');
+    ylabel('Catalyst Mass / Pressure Drop');
+    grid off;
+    hold on;
+
+    [minVal, minIdx_rel] = min(objectives(validIdx));
+    minIdx = find(validIdx);
+    minIdx = minIdx(minIdx_rel);
+
+    plot(diameters(minIdx), minVal, 'ro', 'MarkerSize', 12);
+    text(diameters(minIdx), minVal, sprintf('  Min at %.4fm', diameters(minIdx)));
     hold off;
 end
 
-%%
+
 function optimiseSuperficialVelocity(init, params)
-    % This function runs the ODE with 10 different catalyst diamaters.
-    
-    supVels = 4 + (-5:5) * 0.5;
+    % Function to evaluate reactor length needed for a target conversion
+    % and plot conversion, pressure, pressure drop, superficial velocity,
+    % and length vs diameter
 
-    % Store results
-    W_all = cell(1, length(supVels)); % Store W values
-    P_all = cell(1, length(supVels)); % Store Temperature profiles
-    FA_all = cell(1, length(supVels)); % Store FA values
-    CO2ConversionAll = cell(1, length(supVels)); % Store CO2 conversion
+    params.ergun.particleDiameter = 0.0035;
+    targetConversion = 0.376;
+    diameters = 1 + (-5:5) * 0.1; % [0.5 to 1.5 m]
+    lengths = zeros(1, length(diameters));
+    supVels = zeros(1, length(diameters)); % Superficial velocity array
 
-    % Prepare figures before loop
-    figure(8); % For CO2 conversion profiles
-    figure(9);
+    % Prepare figures without grid lines and titles
+    figure(8); clf; hold on;
+    xlabel('Catalyst Mass (kg)');
+    ylabel('CO2 Conversion');
 
-    % Loop over each temperature
-    for i = 1:length(supVels)
-        params.ergun.supVel = supVels(i);
-        params.ergun.csArea = (params.inlet.totalVolFlowrate/params.ergun.supVel);
-        params.reactor.diameter = sqrt((4*params.ergun.csArea)/pi);
-        params.ergun.gasFlux = params.ergun.inletDensity*params.ergun.supVel;
-        
-        % Assign initial conditions to vector
-        Y0 = [init.FA0, init.FB0, init.FC0, init.FD0, init.T0, init.P0];
-        
-        % Define span for integration
-        Wspan = [0 2000];
+    figure(9); clf; hold on;
+    xlabel('Catalyst Mass (kg)');
+    ylabel('Pressure (Pa)');
+
+    figure(12); clf; hold on;
+    xlabel('Catalyst Mass (kg)');
+    ylabel('Pressure Drop (Pa)');
+
+    for i = 1:length(diameters)
+        D = diameters(i);
+        params.reactor.diameter = D;
+
+        % Update Ergun parameters
+        params.ergun.csArea = (pi / 4) * D^2;
+        params.ergun.supVel = params.inlet.totalVolFlowrate / params.ergun.csArea;
+        params.ergun.gasFlux = params.ergun.inletDensity * params.ergun.supVel;
+        supVels(i) = params.ergun.supVel;
+
+        % Initial conditions
+        Y0 = [init.FA0, init.FB0, init.FC0, init.FD0, 1100, 23e5];
+        Wspan = [0 3000];
+        condition = 'LH';
 
         % Solve ODE
-        [W, Y] = ode45(@(w, Y) odeSolver(w, Y, params), Wspan, Y0);
+        [W, Y] = ode45(@(w, Y) odeSolver(w, Y, params, condition), Wspan, Y0);
 
-        % Store data
-        W_all{i} = W; 
-        P_all{i} = Y(:,6); % Extract Pressure
-        FA_all{i} = Y(:,1); % Extract FA
-        
-        % Compute CO2 conversion
-        CO2ConversionAll{i} = (params.eb.CO2.Fin - FA_all{i}) / params.eb.CO2.Fin;
+        FA = Y(:,1);
+        P = Y(:,6);
+        conversion = (params.eb.CO2.Fin - FA) / params.eb.CO2.Fin;
 
-        % Plot W vs. CO2 Conversion (only once outside the loop for figure 3)
+        % Plot conversion vs. W
         figure(8);
-        plot(W, CO2ConversionAll{i}, 'DisplayName', sprintf('%dm/s', supVels(i)));
-        hold on;
+        plot(W, conversion, 'DisplayName', sprintf('%.2f m', D));
 
-        % Plot W vs. CO2 Conversion (only once outside the loop for figure 3)
+        % Plot pressure vs. W
         figure(9);
-        plot(W, P_all{i}, 'DisplayName', sprintf('%dm/s', supVels(i)));
-        hold on;
-    end 
+        plot(W, P, 'DisplayName', sprintf('%.2f m', D));
 
-    % Formatting for CO2 Conversion Profile (after loop)
-    figure(8);
-    xlabel('W (kg catalyst)');
-    ylabel('CO2 Conversion');
-    title('CO2 Conversion vs. Catalyst Weight for Different Superficial Velocities');
-    legend show;
-    grid on;
-    hold off;
-    
-    % Formatting for CO2 Conversion Profile (after loop)
-    figure(9);
-    xlabel('W (kg catalyst)');
-    ylabel('Pressure (Pa)');
-    title('Pressure vs. Catalyst Weight for Different Superficial Velocities');
-    legend show;
-    grid on;
-    hold off;
+        % Calculate pressure drop and plot
+        deltaP = P(1) - P;
+        figure(12);
+        plot(W, deltaP, 'DisplayName', sprintf('%.2f m', D));
+
+        % Find W for target conversion and compute length
+        idx = find(conversion >= targetConversion, 1);
+        if ~isempty(idx)
+            requiredW = W(idx);
+            bulkDensity = params.ergun.bulkDensity;
+            lengths(i) = (4 * requiredW) / (bulkDensity * pi * D^3);
+        else
+            warning(['Target conversion not reached for diameter = ', num2str(D)]);
+            lengths(i) = NaN;
+        end
+    end
+
+    figure(8); legend show;
+    figure(9); legend show;
+    figure(12); legend show;
+
+%     % Reactor Length vs Diameter
+%     figure(10); clf;
+%     plot(diameters, lengths, '-', 'LineWidth', 1.5);
+%     xlabel('Reactor Diameter (m)');
+%     ylabel('Reactor Length (m)');
+
+    % Superficial Velocity vs Diameter
+    figure(11); clf;
+    plot(diameters, supVels, '-', 'LineWidth', 1.5);
+    xlabel('Reactor Diameter (m)');
+    ylabel('Superficial Velocity (m/s)');
 end
+
+
+function optimiseParticleAndBedDiameter(init, params)
+    % Define ranges
+    d_particles = 0.0035 : 0.0005 : 0.0085;% particle diameters (m)
+    d_beds = 0.5:0.1:1.5;              % bed diameters (m)
+
+    % Constants
+    targetConversion = 0.376;
+    P0 = 23e5; % Initial pressure
+
+    % Preallocate objective matrix
+    objVals = NaN(length(d_particles), length(d_beds));
+
+    % Result storage for analysis
+    bestConfig = struct('dp', NaN, 'D', NaN, 'W', NaN, 'deltaP', NaN, 'L', NaN, 'i', NaN, 'j', NaN);
+    minObj = Inf;
+
+    % Loop over all combinations
+    for i = 1:length(d_particles)
+        for j = 1:length(d_beds)
+            dp = d_particles(i);
+            D = d_beds(j);
+
+            % Update parameters
+            params.ergun.particleDiameter = dp;
+            params.reactor.diameter = D;
+            params.ergun.csArea = (pi/4) * D^2;
+            params.ergun.supVel = params.inlet.totalVolFlowrate / params.ergun.csArea;
+            params.ergun.gasFlux = params.ergun.inletDensity * params.ergun.supVel;
+
+            % Initial conditions and solve ODE
+            Y0 = [init.FA0, init.FB0, init.FC0, init.FD0, 1100, P0];
+            Wspan = [0 3000];
+            condition = 'LH';
+
+            try
+                [W, Y] = ode45(@(w, Y) odeSolver(w, Y, params, condition), Wspan, Y0);
+            catch
+                warning('ODE solver failed at dp=%.4f, D=%.2f', dp, D);
+                continue;
+            end
+
+            FA = Y(:,1);
+            P = Y(:,6);
+            conversion = (params.eb.CO2.Fin - FA) / params.eb.CO2.Fin;
+
+            idx = find(conversion >= targetConversion, 1);
+            if isempty(idx)
+                continue;
+            end
+
+            Wtarget = W(idx);
+            deltaP = P0 - P(idx);
+
+            % Reactor length
+            bulkDensity = params.ergun.bulkDensity;
+            L = (4 * Wtarget) / (bulkDensity * pi * D^2);
+
+            % Apply geometry constraint: D must be <= 0.33 * L
+            if D > 0.33 * L
+                continue;
+            end
+
+            % Objective function: catalyst mass × pressure drop
+            obj = Wtarget / deltaP;
+            objVals(i, j) = obj;
+
+            % Store best result
+            if obj < minObj
+                minObj = obj;
+                bestConfig.dp = dp;
+                bestConfig.D = D;
+                bestConfig.W = Wtarget;
+                bestConfig.deltaP = deltaP;
+                bestConfig.L = L;
+                bestConfig.i = i;
+                bestConfig.j = j;
+            end
+        end
+    end
+
+    % Plot the objective function as a surface
+    [D_grid, dp_grid] = meshgrid(d_beds, d_particles);
+    figure;
+    surf(D_grid, dp_grid, objVals);
+    xlabel('Bed Diameter (m)');
+    ylabel('Particle Diameter (m)');
+    zlabel('Objective: W \times \DeltaP');
+    grid off;
+    colorbar;
+    hold on;
+
+    % Add red marker at optimum point
+    plot3(bestConfig.D, bestConfig.dp, objVals(bestConfig.i, bestConfig.j), ...
+        'ro', 'MarkerSize', 10, 'LineWidth', 2);
+    legend('Objective Surface', 'Optimal Configuration', 'Location', 'northeast');
+
+    % Output best configuration
+    fprintf('Best config:\n');
+    fprintf('Particle Diameter = %.4f m\n', bestConfig.dp);
+    fprintf('Bed Diameter      = %.2f m\n', bestConfig.D);
+    fprintf('Catalyst Mass     = %.2f kg\n', bestConfig.W);
+    fprintf('Pressure Drop     = %.2f Pa\n', bestConfig.deltaP);
+    fprintf('Reactor Length    = %.2f m\n', bestConfig.L);
+end
+
 
 %%
 function displayTable(params)
