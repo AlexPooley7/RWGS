@@ -98,10 +98,11 @@ params.cpCO = schomate(params, params.inlet.temp / 1000, 'CO');
 params.cpCH4 = schomate(params, params.inlet.temp / 1000, 'CH4');
 
 % Ergun equation
-params.reactor.diameter = 1; % Choose
+params.reactor.diameter = 0.8; % Choose
 params.ergun.bulkDensity = 1200; % kg/m3
 params.ergun.particleDensity = 1910; % kg/m3
 params.ergun.voidage = (params.ergun.particleDensity-params.ergun.bulkDensity)/params.ergun.particleDensity; % -
+disp(params.ergun.voidage)
 
 params.ergun.particleDiameter = 0.006; % m
 params.ergun.csArea = (pi*params.reactor.diameter^2)/4; % m2
@@ -121,11 +122,14 @@ params.molMass.CO = 28.01; % g/mol
 params.molMass.CH4 = 16.04; % g/mol
 params.molMass.gases = 35; % g/mol
 % Density
-params.ergun.inletDensity = densityCalculation(params); % kg/m3
+params.ergun.inletDensity = densityCalculation(params);
+disp(params.ergun.inletDensity)% kg/m3
 
 % Volumetric flowrate calculation
 params.inlet.totalMassFlowrate = (340236.1+287420.26)/(60*60*24); % kgday-1 -> kg s-1
+disp(params.inlet.totalMassFlowrate)
 params.inlet.totalVolFlowrate = params.inlet.totalMassFlowrate/params.ergun.inletDensity; % m3 s-1
+disp(params.inlet.totalVolFlowrate)
 params.ergun.supVel = params.inlet.totalVolFlowrate/params.ergun.csArea; % m s-1
 
 % Gas Flux
@@ -221,11 +225,12 @@ reactorLengthLH = reactorLengthFunc(params,wLH);
 % plotOriginal(reactorLengthp,conversionCO2p,wp,FAp,FBp,FCp,FDp,Tp,Pp,reactorLengthLH,conversionCO2LH,wLH,FALH,FBLH,FCLH,FDLH,TLH,PLH)
 % displayTable(params)
 % plotThieleEff(thieleModLog, effFactorLog, wLH)
-optimiseTemp(init,params) % Temperature optimisation function
+% optimiseTemp(init,params) % Temperature optimisation function
 % optimisePressure(init, params) % Pressure optimisation function
 % optimiseParticleDiamater(init, params) % Particle diameter optimisation function
-% optimiseSuperficialVelocity(init, params)
-% optimiseParticleAndBedDiameter(init, params)
+optimiseSuperficialVelocity(init, params)
+% optimiseFlowrates(init, params)
+% optimiseSyngasRatio(init, params)
 % plotThieleEff(thieleModLog, effFactorLog, wLH)
 
 %%
@@ -863,40 +868,33 @@ end
 
 
 function optimiseSuperficialVelocity(init, params)
-    % Function to evaluate reactor length needed for a target conversion
-    % and plot conversion, pressure, pressure drop, superficial velocity,
-    % and length vs diameter
+    % Function to evaluate reactor performance vs diameter
+    % Plots: conversion, pressure, temperature, pressure drop, superficial velocity
 
     params.ergun.particleDiameter = 0.0035;
     targetConversion = 0.376;
-    diameters = 1 + (-5:5) * 0.1; % [0.5 to 1.5 m]
+    diameters = 1 + (-5:5) * 0.1; % Diameters from 0.5 m to 1.5 m
     lengths = zeros(1, length(diameters));
-    supVels = zeros(1, length(diameters)); % Superficial velocity array
+    supVels = zeros(1, length(diameters));
+    deltaPs = zeros(1, length(diameters));
 
-    % Prepare figures without grid lines and titles
-    figure(8); clf; hold on;
-    xlabel('Catalyst Mass (kg)');
-    ylabel('CO2 Conversion');
-
-    figure(9); clf; hold on;
-    xlabel('Catalyst Mass (kg)');
-    ylabel('Pressure (Pa)');
-
-    figure(12); clf; hold on;
-    xlabel('Catalyst Mass (kg)');
-    ylabel('Pressure Drop (Pa)');
+    % Prepare figures
+    figure(8); clf; hold on; xlabel('Catalyst Mass (kg)'); ylabel('CO2 Conversion');
+    figure(9); clf; hold on; xlabel('Catalyst Mass (kg)'); ylabel('Pressure (Pa)');
+    figure(12); clf; hold on; xlabel('Catalyst Mass (kg)'); ylabel('Pressure Drop (Pa)');
+    figure(14); clf; hold on; xlabel('Catalyst Mass (kg)'); ylabel('Temperature (K)'); title('Temperature vs Catalyst Mass');
 
     for i = 1:length(diameters)
         D = diameters(i);
         params.reactor.diameter = D;
 
-        % Update Ergun parameters
+        % Update cross-sectional area and superficial velocity
         params.ergun.csArea = (pi / 4) * D^2;
         params.ergun.supVel = params.inlet.totalVolFlowrate / params.ergun.csArea;
         params.ergun.gasFlux = params.ergun.inletDensity * params.ergun.supVel;
         supVels(i) = params.ergun.supVel;
 
-        % Initial conditions
+        % Initial conditions: [FA, FB, FC, FD, T, P]
         Y0 = [init.FA0, init.FB0, init.FC0, init.FD0, 1100, 23e5];
         Wspan = [0 3000];
         condition = 'LH';
@@ -905,157 +903,104 @@ function optimiseSuperficialVelocity(init, params)
         [W, Y] = ode45(@(w, Y) odeSolver(w, Y, params, condition), Wspan, Y0);
 
         FA = Y(:,1);
+        T = Y(:,5);
         P = Y(:,6);
         conversion = (params.eb.CO2.Fin - FA) / params.eb.CO2.Fin;
 
-        % Plot conversion vs. W
+        % Plot conversion vs catalyst mass
         figure(8);
         plot(W, conversion, 'DisplayName', sprintf('%.2f m', D));
 
-        % Plot pressure vs. W
+        % Plot pressure vs catalyst mass
         figure(9);
         plot(W, P, 'DisplayName', sprintf('%.2f m', D));
 
-        % Calculate pressure drop and plot
+        % Plot temperature vs catalyst mass
+        figure(14);
+        plot(W, T, 'DisplayName', sprintf('%.2f m', D));
+
+        % Plot pressure drop vs catalyst mass
         deltaP = P(1) - P;
+        deltaPs(i) = deltaP(end);
         figure(12);
         plot(W, deltaP, 'DisplayName', sprintf('%.2f m', D));
 
-        % Find W for target conversion and compute length
+        % Find W where target conversion is achieved
         idx = find(conversion >= targetConversion, 1);
+
         if ~isempty(idx)
             requiredW = W(idx);
             bulkDensity = params.ergun.bulkDensity;
             lengths(i) = (4 * requiredW) / (bulkDensity * pi * D^3);
+
+            % Print reactor information
+            fprintf('Diameter: %.2f m | Catalyst mass for %.3f conversion: %.2f kg | Reactor length: %.2f m | Pressure drop: %.2f Pa\n', ...
+                D, targetConversion, requiredW, lengths(i), deltaPs(i));
+
+            % Print temperature at target conversion
+            tempAtConversion = T(idx);
+            fprintf('   Temperature at target conversion: %.2f K\n', tempAtConversion);
         else
             warning(['Target conversion not reached for diameter = ', num2str(D)]);
             lengths(i) = NaN;
+            deltaPs(i) = NaN;
         end
     end
 
+    % Show legends
     figure(8); legend show;
     figure(9); legend show;
     figure(12); legend show;
+    figure(14); legend show;
 
-%     % Reactor Length vs Diameter
-%     figure(10); clf;
-%     plot(diameters, lengths, '-', 'LineWidth', 1.5);
-%     xlabel('Reactor Diameter (m)');
-%     ylabel('Reactor Length (m)');
-
-    % Superficial Velocity vs Diameter
+    % Superficial velocity vs diameter
     figure(11); clf;
     plot(diameters, supVels, '-', 'LineWidth', 1.5);
     xlabel('Reactor Diameter (m)');
     ylabel('Superficial Velocity (m/s)');
+    title('Superficial Velocity vs Reactor Diameter');
+
+    % Pressure drop vs diameter
+    figure(13); clf;
+    plot(diameters, deltaPs, '-', 'LineWidth', 1.5);
+    xlabel('Reactor Diameter (m)');
+    ylabel('Final Pressure Drop (Pa)');
+    title('Pressure Drop vs Reactor Diameter');
+
+        % Extract molar flows at target conversion point
+    FA_conv = FA(idx);
+    FB_conv = Y(idx,2);
+    FC_conv = Y(idx,3);
+    FD_conv = Y(idx,4);
+    
+    % Calculate average molar mass and density at this point
+    avgMolarMass = averageMolarMassAtConversion(FA_conv, FB_conv, FC_conv, FD_conv, params);
+    densityAtConv = (P(idx) * avgMolarMass) / (params.arr.gasConst * T(idx));
+    
+    fprintf('   Avg molar mass at conversion: %.5f kg/mol\n', avgMolarMass);
+    fprintf('   Density at conversion: %.3f kg/m^3\n', densityAtConv);
+
 end
 
 
-function optimiseParticleAndBedDiameter(init, params)
-    % Define ranges
-    d_particles = 0.0035 : 0.0005 : 0.0085;% particle diameters (m)
-    d_beds = 0.5:0.1:1.5;              % bed diameters (m)
+%%
+function avgMolarMass = averageMolarMassAtConversion(FA, FB, FC, FD, params)
+    % Calculate average molar mass at a given point in the reactor
+    % molMass: structure containing molar masses of species [g/mol]
 
-    % Constants
-    targetConversion = 0.376;
-    P0 = 23e5; % Initial pressure
+    % Total molar flow
+    totalFlow = FA + FB + FC + FD;
 
-    % Preallocate objective matrix
-    objVals = NaN(length(d_particles), length(d_beds));
+    % Weighted molar mass [g/mol]
+    avgMolarMass = ((FA * params.molMass.CO2) + ...
+                    (FB * params.molMass.H2) + ...
+                    (FC * params.molMass.CO) + ...
+                    (FD * 18) +(params.inlet.molFrac.CH4*params.molMass.CH4) + ...
+                            (params.inlet.molFrac.gases*params.molMass.gases)) / totalFlow;
 
-    % Result storage for analysis
-    bestConfig = struct('dp', NaN, 'D', NaN, 'W', NaN, 'deltaP', NaN, 'L', NaN, 'i', NaN, 'j', NaN);
-    minObj = Inf;
-
-    % Loop over all combinations
-    for i = 1:length(d_particles)
-        for j = 1:length(d_beds)
-            dp = d_particles(i);
-            D = d_beds(j);
-
-            % Update parameters
-            params.ergun.particleDiameter = dp;
-            params.reactor.diameter = D;
-            params.ergun.csArea = (pi/4) * D^2;
-            params.ergun.supVel = params.inlet.totalVolFlowrate / params.ergun.csArea;
-            params.ergun.gasFlux = params.ergun.inletDensity * params.ergun.supVel;
-
-            % Initial conditions and solve ODE
-            Y0 = [init.FA0, init.FB0, init.FC0, init.FD0, 1100, P0];
-            Wspan = [0 3000];
-            condition = 'LH';
-
-            try
-                [W, Y] = ode45(@(w, Y) odeSolver(w, Y, params, condition), Wspan, Y0);
-            catch
-                warning('ODE solver failed at dp=%.4f, D=%.2f', dp, D);
-                continue;
-            end
-
-            FA = Y(:,1);
-            P = Y(:,6);
-            conversion = (params.eb.CO2.Fin - FA) / params.eb.CO2.Fin;
-
-            idx = find(conversion >= targetConversion, 1);
-            if isempty(idx)
-                continue;
-            end
-
-            Wtarget = W(idx);
-            deltaP = P0 - P(idx);
-
-            % Reactor length
-            bulkDensity = params.ergun.bulkDensity;
-            L = (4 * Wtarget) / (bulkDensity * pi * D^2);
-
-            % Apply geometry constraint: D must be <= 0.33 * L
-            if D > 0.33 * L
-                continue;
-            end
-
-            % Objective function: catalyst mass × pressure drop
-            obj = Wtarget / deltaP;
-            objVals(i, j) = obj;
-
-            % Store best result
-            if obj < minObj
-                minObj = obj;
-                bestConfig.dp = dp;
-                bestConfig.D = D;
-                bestConfig.W = Wtarget;
-                bestConfig.deltaP = deltaP;
-                bestConfig.L = L;
-                bestConfig.i = i;
-                bestConfig.j = j;
-            end
-        end
-    end
-
-    % Plot the objective function as a surface
-    [D_grid, dp_grid] = meshgrid(d_beds, d_particles);
-    figure;
-    surf(D_grid, dp_grid, objVals);
-    xlabel('Bed Diameter (m)');
-    ylabel('Particle Diameter (m)');
-    zlabel('Objective: W \times \DeltaP');
-    grid off;
-    colorbar;
-    hold on;
-
-    % Add red marker at optimum point
-    plot3(bestConfig.D, bestConfig.dp, objVals(bestConfig.i, bestConfig.j), ...
-        'ro', 'MarkerSize', 10, 'LineWidth', 2);
-    legend('Objective Surface', 'Optimal Configuration', 'Location', 'northeast');
-
-    % Output best configuration
-    fprintf('Best config:\n');
-    fprintf('Particle Diameter = %.4f m\n', bestConfig.dp);
-    fprintf('Bed Diameter      = %.2f m\n', bestConfig.D);
-    fprintf('Catalyst Mass     = %.2f kg\n', bestConfig.W);
-    fprintf('Pressure Drop     = %.2f Pa\n', bestConfig.deltaP);
-    fprintf('Reactor Length    = %.2f m\n', bestConfig.L);
+    % Convert to kg/mol
+    avgMolarMass = avgMolarMass / 1000;
 end
-
 
 %%
 function displayTable(params)
@@ -1130,6 +1075,189 @@ function inletDensity = densityCalculation(params)
     inletDensity = (params.inlet.pres*averageInletMolarMass)/(params.arr.gasConst*params.inlet.temp);
 
 end
+
+function optimiseFlowrates(init, params)
+    
+    params.ergun.particleDiameter = 0.0035;
+    params.reactor.diameter = 1.1;
+
+    % Define the variation percentages (include 0% change)
+    variationPercent = [-10, -8, -6, -4, -2, 0, 2, 4, 6, 8, 10] / 100;
+
+    % Store results
+    wAll = cell(1, length(variationPercent));
+    co2ConversionAll = cell(1, length(variationPercent));
+    
+    % To store catalyst mass at 0.376 conversion
+    massAtDesiredConversion = NaN(size(variationPercent));
+
+    % Prepare figure for CO2 conversion profiles
+    figure(1);
+    hold on;
+
+    % Loop over each variation
+    for i = 1:length(variationPercent)
+        v = variationPercent(i);
+        
+        % Vary FA0, FB0, FC0
+        fa0New = init.FA0 * (1 + v);
+        fb0New = init.FB0 * (1 + v);
+        fc0New = init.FC0 * (1 + v);
+
+        % FD0 special case: only vary upwards
+        if v > 0
+            fd0New = init.FC0 * v;
+        else
+            fd0New = 0;
+        end
+        
+        % Assign initial conditions to vector
+        y0 = [fa0New, fb0New, fc0New, fd0New, 1100, 23e5];
+        
+        % Define span for integration
+        wSpan = [0 5000];
+        condition = 'LH';
+
+        % Solve ODE
+        [w, y] = ode45(@(w, y) odeSolver(w, y, params, condition), wSpan, y0);
+
+        % Store data
+        wAll{i} = w;
+        
+        % Compute CO2 conversion
+        co2Conversion = (params.eb.CO2.Fin - y(:,1)) / params.eb.CO2.Fin;
+        
+        % Remove any negative conversion points
+        validIndices = co2Conversion >= 0;
+        wValid = w(validIndices);
+        co2ConversionValid = co2Conversion(validIndices);
+        
+        co2ConversionAll{i} = co2ConversionValid;
+
+        % Plot W vs. valid CO2 Conversion
+        if v == 0
+            plot(wValid, co2ConversionValid, 'k-', 'LineWidth', 2, 'DisplayName', '0% Change');
+        else
+            plot(wValid, co2ConversionValid, 'DisplayName', sprintf('%+d%% Change', round(v*100)));
+        end
+        
+        % Find catalyst mass for conversion >= 0.376 (first occurrence)
+        idxAbove = find(co2ConversionValid >= 0.376, 1, 'first');
+        if ~isempty(idxAbove)
+            massAtDesiredConversion(i) = wValid(idxAbove);
+        end
+    end
+
+    % Plot red dashed line at desired conversion
+    desiredConversionLine = yline(0.376, '--r', 'LineWidth', 1.5);
+    set(get(get(desiredConversionLine, 'Annotation'), 'LegendInformation'), 'IconDisplayStyle', 'on');
+    desiredConversionLine.DisplayName = 'Desired Conversion';
+
+    % Formatting for CO2 Conversion Profile
+    xlabel('Catalyst Mass (kg)');
+    ylabel('CO2 Conversion');
+    legend('show', 'Location', 'best');
+    grid off;
+    hold off;
+
+    % --------- New plot for Catalyst Mass @ Desired Conversion (Regression only) ---------
+    figure(2);
+
+    % Remove NaNs for fitting
+    validIndices = ~isnan(massAtDesiredConversion);
+    xData = variationPercent(validIndices) * 100; % percent
+    yData = massAtDesiredConversion(validIndices);
+
+    % Fit a 2nd-degree polynomial regression
+    p = polyfit(xData, yData, 2);
+
+    % Create fine x points for smooth curve
+    xFit = linspace(min(xData), max(xData), 200);
+    yFit = polyval(p, xFit);
+
+    % Plot the regression line only
+    plot(xFit, yFit, 'b-', 'LineWidth', 2);
+
+    xlabel('Percentage Change in Initial Flowrates (%)');
+    ylabel('Catalyst Mass for 0.376 Conversion (kg)');
+    grid off;
+end
+
+function optimiseSyngasRatio(init, params)
+
+    params.ergun.particleDiameter = 0.0035;
+    params.reactor.diameter = 1.1;
+
+    totalSyngasFlow = init.FB0 + init.FC0;
+    co2In = init.FA0;
+
+    ratioRange = linspace(2, 4, 100);
+
+    catalystMassAtDesiredConversion = NaN(size(ratioRange));
+    desiredConversions = NaN(size(ratioRange));
+
+    for i = 1:length(ratioRange)
+        ratio = ratioRange(i);
+
+        fb0New = (ratio / (ratio + 1)) * totalSyngasFlow;
+        fc0New = totalSyngasFlow - fb0New;
+
+        fa0New = init.FA0;
+        fd0New = init.FD0;
+
+        desiredConversion = (fb0New - 2*fc0New) / (3 * co2In);
+        desiredConversions(i) = desiredConversion;
+
+        if desiredConversion <= 0
+            continue;
+        end
+
+        y0 = [fa0New, fb0New, fc0New, fd0New, 1100, 23e5];
+        wSpan = [0 5000];
+        condition = 'LH';
+
+        [w, y] = ode45(@(w, y) odeSolver(w, y, params, condition), wSpan, y0);
+
+        co2Conversion = (co2In - y(:,1)) / co2In;
+        validIndices = co2Conversion >= 0;
+        wValid = w(validIndices);
+        co2ConversionValid = co2Conversion(validIndices);
+
+        idxAbove = find(co2ConversionValid >= desiredConversion, 1, 'first');
+        if ~isempty(idxAbove)
+            catalystMassAtDesiredConversion(i) = wValid(idxAbove);
+        end
+    end
+
+    % Remove NaN values for regression
+    valid = ~isnan(catalystMassAtDesiredConversion);
+    ratiosValid = ratioRange(valid);
+    catalystMassValid = catalystMassAtDesiredConversion(valid);
+
+    % Polynomial regression (3rd degree)
+    p = polyfit(ratiosValid, catalystMassValid, 3);
+
+    % Generate smooth curve points
+    ratioSmooth = linspace(min(ratiosValid), max(ratiosValid), 200);
+    catalystMassSmooth = polyval(p, ratioSmooth);
+
+    initialRatio = init.FB0 / init.FC0;
+    % Find initial mass from regression curve
+    initialMass = polyval(p, initialRatio);
+
+    figure;
+    plot(ratioSmooth, catalystMassSmooth, 'b-', 'LineWidth', 2);
+    hold on;
+    plot(initialRatio, initialMass, 'ro', 'MarkerSize', 8, 'LineWidth', 2);
+    text(initialRatio, initialMass, sprintf('      Expected Ratio = %.2f', initialRatio), ...
+        'Color', 'red', 'FontWeight', 'bold', 'VerticalAlignment', 'bottom');
+    xlabel('Initial Syngas Ratio');
+    ylabel('Catalyst Mass (kg) to reach desired ratio (2)');
+    grid off;
+    hold off;
+end
+
+
 
 %%
 function mixtureViscocity = viscocityCalculation(params)
